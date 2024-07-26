@@ -42,6 +42,8 @@
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <nlohmann/json.hpp>
+using namespace nlohmann;
 
 namespace colmap {
 
@@ -627,6 +629,45 @@ std::vector<CameraRig> ReadCameraRigConfig(const std::string& rig_config_path,
   return camera_rigs;
 }
 
+void WriteCameraRigConfig(const std::string& rig_config_input, const Reconstruction& reconstruction, const std::vector<CameraRig>& camera_rigs, const std::string& rig_config_out_file) {
+  std::stringstream bufferNodes;
+  std::ifstream nodesFile(rig_config_input);
+  bufferNodes << nodesFile.rdbuf();
+  auto nodesJson = json::parse(bufferNodes.str());
+
+  std::vector<json> rigs = nodesJson.get<std::vector<json>>();
+  json output = json::array();
+  size_t rig_id = 0;
+  for (const auto & rig : rigs) {
+    output.push_back(json::object());
+    output.back()["ref_camera_id"] = rig["ref_camera_id"];
+    output.back()["cameras"] = json::array();
+    
+    for (const auto & cam : rig["cameras"]) {
+      output.back()["cameras"].push_back(json::object());
+      output.back()["cameras"].back()["camera_id"] = cam["camera_id"];
+      
+      const Camera& camera = reconstruction.Camera(cam["camera_id"]);
+      const std::string modelName = camera.ModelName();
+      output.back()["cameras"].back()["camera_model"] = modelName;
+      const std::string param = camera.ParamsInfo();
+      output.back()["cameras"].back()["camera_params_format"] = param;
+      const std::string paramStr = camera.ParamsToString();
+      output.back()["cameras"].back()["camera_params"] = paramStr;
+
+      output.back()["cameras"].back()["image_prefix"] = cam["image_prefix"];
+      const auto quat = camera_rigs[rig_id].CamFromRig(cam["camera_id"]).rotation;
+      output.back()["cameras"].back()["cam_from_rig_rotation"] = {quat.w(), quat.x(), quat.y(), quat.z()};
+      output.back()["cameras"].back()["cam_from_rig_translation"] = camera_rigs[rig_id].CamFromRig(cam["camera_id"]).translation;
+    }
+
+    ++rig_id;
+  }
+
+  std::ofstream file(rig_config_out_file);
+  file << output.dump(4);
+}
+
 }  // namespace
 
 int RunRigBundleAdjuster(int argc, char** argv) {
@@ -676,6 +717,8 @@ int RunRigBundleAdjuster(int argc, char** argv) {
   THROW_CHECK(bundle_adjuster.Solve(&reconstruction, &camera_rigs));
 
   reconstruction.Write(output_path);
+
+  WriteCameraRigConfig(rig_config_path, reconstruction, camera_rigs, JoinPaths(output_path,  "optimized_rig_config.json"));
 
   return EXIT_SUCCESS;
 }
