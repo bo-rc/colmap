@@ -222,7 +222,10 @@ void BindImages(py::module& m) {
           .def_readwrite("roi_min_x", &UDOpts::roi_min_x)
           .def_readwrite("roi_min_y", &UDOpts::roi_min_y)
           .def_readwrite("roi_max_x", &UDOpts::roi_max_x)
-          .def_readwrite("roi_max_y", &UDOpts::roi_max_y);
+          .def_readwrite("roi_max_y", &UDOpts::roi_max_y)
+          .def_readwrite("enable_scaling", &UDOpts::enable_scaling)
+          .def_readwrite("center_principal_point", &UDOpts::center_principal_point)
+          .def_readwrite("enforce_size", &UDOpts::enforce_size);
   MakeDataclass(PyUndistortCameraOptions);
 
   m.def("import_images",

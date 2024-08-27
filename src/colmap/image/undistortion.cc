@@ -222,7 +222,7 @@ void COLMAPUndistorter::Run() {
     }
   }
 
-  LOG(INFO) << "Writing reconstruction...";
+  LOG(INFO) << "Writing reconstruction... to " << JoinPaths(output_path_, "sparse");
   Reconstruction undistorted_reconstruction = reconstruction_;
   UndistortReconstruction(options_, &undistorted_reconstruction);
   undistorted_reconstruction.Write(JoinPaths(output_path_, "sparse"));
@@ -254,7 +254,7 @@ bool COLMAPUndistorter::Undistort(const image_t image_id) const {
   // scaling is needed
   if (camera.IsUndistorted() && options_.max_image_size < 0 &&
       ExistsFile(input_image_path)) {
-    LOG(INFO) << "Undistorted image found; copying to location: "
+    LOG(INFO) << "Undistorted image found; copying "<< input_image_path << " to location: "
               << output_image_path;
     FileCopy(input_image_path, output_image_path, copy_type_);
     return true;
@@ -264,6 +264,9 @@ bool COLMAPUndistorter::Undistort(const image_t image_id) const {
     LOG(ERROR) << "Cannot read image at path " << input_image_path;
     return false;
   }
+
+  LOG(INFO) << "distorted_bitmap wxh " << distorted_bitmap.Width() << "x" << distorted_bitmap.Height() << std::endl;
+  LOG(INFO) << "camera wxh " << camera.width<< "x" << camera.height << std::endl;
 
   UndistortImage(options_,
                  distorted_bitmap,
@@ -839,9 +842,45 @@ Camera UndistortCamera(const UndistortCameraOptions& options,
                                           static_cast<double>(roi_min_y));
   }
 
+  if (options.center_principal_point) {
+    double principal_point_x = undistorted_camera.PrincipalPointX();
+    double principal_point_y = undistorted_camera.PrincipalPointY();
+
+    size_t right_reach = static_cast<size_t>(std::round(static_cast<double>(roi_max_x) - principal_point_x));
+    size_t left_reach = std::round(principal_point_x - roi_min_x);
+    size_t top_reach = std::round(principal_point_y - roi_min_y);
+    size_t bottom_reach = std::round(roi_max_y - principal_point_y);
+
+    size_t half_width = std::min(right_reach, left_reach);
+    size_t half_height = std::min(top_reach, bottom_reach);
+
+    if (options.enforce_size && (camera.model_id == OpenCVFisheyeCameraModel::model_id)) { // must be a fish-eye camera so the original size can be guaranteed
+      // Enforce the size of the undistorted image.
+      size_t original_half_width = std::round(camera.width / 2);
+      size_t original_half_height = std::round(camera.height / 2);
+
+      THROW_CHECK_LE(half_width, original_half_width);
+      THROW_CHECK_LE(half_height, original_half_height);
+
+      half_width = original_half_width;
+      half_height = original_half_height;
+    }
+
+    undistorted_camera.SetPrincipalPointX(static_cast<double>(half_width));
+    undistorted_camera.SetPrincipalPointY(static_cast<double>(half_height));
+
+    undistorted_camera.width = 2 * half_width;
+    undistorted_camera.height = 2 * half_height;
+    
+    roi_min_x =  std::max(size_t(0), static_cast<size_t>(std::round(principal_point_x - static_cast<double>(half_width))));
+    roi_min_y =  std::max(size_t(0), static_cast<size_t>(std::round(principal_point_y - static_cast<double>(half_height))));
+    roi_max_x =  std::min(camera.width, static_cast<size_t>(std::round(principal_point_x + static_cast<double>(half_width))));
+    roi_max_y =  std::min(camera.height, static_cast<size_t>(std::round(principal_point_y + static_cast<double>(half_height))));
+  }
+
   // Scale the image such the the boundary of the undistorted image.
-  if (roi_enabled || (camera.model_id != SimplePinholeCameraModel::model_id &&
-                      camera.model_id != PinholeCameraModel::model_id)) {
+  if (options.enable_scaling && (roi_enabled || (camera.model_id != SimplePinholeCameraModel::model_id &&
+                      camera.model_id != PinholeCameraModel::model_id))) {
     // Determine min/max coordinates along top / bottom image border.
 
     double left_min_x = std::numeric_limits<double>::max();
@@ -866,6 +905,11 @@ Camera UndistortCamera(const UndistortCameraOptions& options,
       right_max_x = std::max(right_max_x, undistorted_point2(0));
     }
 
+    LOG(INFO) << "left_min_x: " << left_min_x 
+              << " left_max_x: " << left_max_x
+              << " right_min_x: " << right_min_x
+              << " right_max_x: " << right_max_x;
+
     // Determine min, max coordinates along left / right image border.
 
     double top_min_y = std::numeric_limits<double>::max();
@@ -889,6 +933,11 @@ Camera UndistortCamera(const UndistortCameraOptions& options,
       bottom_min_y = std::min(bottom_min_y, undistorted_point2(1));
       bottom_max_y = std::max(bottom_max_y, undistorted_point2(1));
     }
+
+    LOG(INFO) << "top_min_y: " << top_min_y 
+              << " top_max_y: " << top_max_y
+              << " bottom_min_y: " << bottom_min_y
+              << " bottom_max_y: " << bottom_max_y;
 
     const double cx = undistorted_camera.PrincipalPointX();
     const double cy = undistorted_camera.PrincipalPointY();
