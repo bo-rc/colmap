@@ -57,6 +57,15 @@ struct UndistortCameraOptions {
   double roi_min_y = 0.0;
   double roi_max_x = 1.0;
   double roi_max_y = 1.0;
+
+  // Enable scaling of the camera to include all pixels from the original image.
+  bool enable_scaling = false;
+
+  // move the principal point to the center of the image
+  bool center_principal_point = true;
+
+  // enforce the size of the undistorted image to be the same as the original
+  bool enforce_size = true;
 };
 
 // Undistort images and export undistorted cameras, as required by the
