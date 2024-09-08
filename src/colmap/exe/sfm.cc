@@ -823,7 +823,10 @@ void WriteCameraRigConfig(const std::string& rig_config_input, const Reconstruct
       output.back()["cameras"].back()["image_prefix"] = cam["image_prefix"];
       const auto quat = camera_rigs[rig_id].CamFromRig(cam["camera_id"]).rotation;
       output.back()["cameras"].back()["cam_from_rig_rotation"] = {quat.w(), quat.x(), quat.y(), quat.z()};
-      output.back()["cameras"].back()["cam_from_rig_translation"] = camera_rigs[rig_id].CamFromRig(cam["camera_id"]).translation;
+      output.back()["cameras"].back()["cam_from_rig_translation"] = {
+        camera_rigs[rig_id].CamFromRig(cam["camera_id"]).translation.x(),
+        camera_rigs[rig_id].CamFromRig(cam["camera_id"]).translation.y(),
+        camera_rigs[rig_id].CamFromRig(cam["camera_id"]).translation.z()};
     }
 
     ++rig_id;
