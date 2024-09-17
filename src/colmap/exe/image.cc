@@ -337,6 +337,11 @@ int RunImageUndistorter(int argc, char** argv) {
   options.AddDefaultOption("roi_min_y", &undistort_camera_options.roi_min_y);
   options.AddDefaultOption("roi_max_x", &undistort_camera_options.roi_max_x);
   options.AddDefaultOption("roi_max_y", &undistort_camera_options.roi_max_y);
+  options.AddDefaultOption("enable_scaling", &undistort_camera_options.enable_scaling);
+  options.AddDefaultOption("center_principal_point", &undistort_camera_options.center_principal_point);
+  options.AddDefaultOption("enforce_size", &undistort_camera_options.enforce_size);
+  options.AddDefaultOption("enforced_width", &undistort_camera_options.enforced_width);
+  options.AddDefaultOption("enforced_height", &undistort_camera_options.enforced_height);
   options.Parse(argc, argv);
 
   CreateDirIfNotExists(output_path);

@@ -66,6 +66,9 @@ struct UndistortCameraOptions {
 
   // enforce the size of the undistorted image to be the same as the original
   bool enforce_size = true;
+
+  double enforced_width = 4096;
+  double enforced_height = 3008;
 };
 
 // Undistort images and export undistorted cameras, as required by the
