@@ -856,16 +856,10 @@ Camera UndistortCamera(const UndistortCameraOptions& options,
     size_t half_width = std::min(right_reach, left_reach);
     size_t half_height = std::min(top_reach, bottom_reach);
 
-    if (options.enforce_size && (camera.model_id == OpenCVFisheyeCameraModel::model_id)) { // must be a fish-eye camera so the original size can be guaranteed
+    if (options.enforce_size) {
       // Enforce the size of the undistorted image.
-      size_t original_half_width = std::round(camera.width / 2);
-      size_t original_half_height = std::round(camera.height / 2);
-
-      THROW_CHECK_LE(half_width, original_half_width);
-      THROW_CHECK_LE(half_height, original_half_height);
-
-      half_width = original_half_width;
-      half_height = original_half_height;
+      half_width = std::round(options.enforced_width / 2);
+      half_height = std::round(options.enforced_height / 2);
     }
 
     undistorted_camera.SetPrincipalPointX(static_cast<double>(half_width));
