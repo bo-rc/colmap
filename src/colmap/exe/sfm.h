@@ -46,6 +46,10 @@ void RunPointTriangulatorImpl(
 int RunAutomaticReconstructor(int argc, char** argv);
 int RunBundleAdjuster(int argc, char** argv);
 int RunColorExtractor(int argc, char** argv);
+int RunColorExtractorProvidedImages(int argc, char** argv);
+int RunReColorPoints3D(int argc, char** argv);
+int RunObjectExtractor(int argc, char** argv);
+int RunPlyExtractor(int argc, char** argv);
 int RunMapper(int argc, char** argv);
 int RunHierarchicalMapper(int argc, char** argv);
 int RunPosePriorMapper(int argc, char** argv);

@@ -320,6 +320,7 @@ bool Bitmap::InterpolateBilinear(const double x,
   const int y1 = y0 + 1;
 
   if (x0 < 0 || x1 >= width_ || y0 < 0 || y1 >= height_) {
+    LOG(WARNING) << "Interpolation out of bounds: width: " << width_ << ", height: " << height_ << " -> x0: " << x0 << ", x1: " << x1 << ", y0: " << y0 << ", y1: " << y1 << std::endl;
     return false;
   }
 

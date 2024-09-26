@@ -98,6 +98,10 @@ int main(int argc, char** argv) {
                         &colmap::RunAutomaticReconstructor);
   commands.emplace_back("bundle_adjuster", &colmap::RunBundleAdjuster);
   commands.emplace_back("color_extractor", &colmap::RunColorExtractor);
+  commands.emplace_back("color_extractor_from_images", &colmap::RunColorExtractorProvidedImages);
+  commands.emplace_back("object_extractor", &colmap::RunObjectExtractor);
+  commands.emplace_back("ply_extractor", &colmap::RunPlyExtractor);
+  commands.emplace_back("recolor_points", &colmap::RunReColorPoints3D);
   commands.emplace_back("database_cleaner", &colmap::RunDatabaseCleaner);
   commands.emplace_back("database_creator", &colmap::RunDatabaseCreator);
   commands.emplace_back("database_merger", &colmap::RunDatabaseMerger);

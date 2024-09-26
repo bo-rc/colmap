@@ -49,6 +49,7 @@ COLMAP_ADD_LIBRARY(
         timer.h timer.cc
         types.h
         version.h version.cc
+        json_utils.h
     PUBLIC_LINK_LIBS
         Eigen3::Eigen
         glog::glog
