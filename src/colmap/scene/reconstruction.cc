@@ -38,6 +38,9 @@
 #include "colmap/sensor/bitmap.h"
 #include "colmap/util/misc.h"
 #include "colmap/util/ply.h"
+#include "colmap/util/json_utils.h"
+
+#include <functional>
 
 namespace colmap {
 
@@ -691,6 +694,300 @@ void Reconstruction::ExtractColorsForAllImages(const std::string& path) {
                                Eigen::Vector3d(color.r, color.g, color.b));
             color_counts.emplace(point2D.point3D_id, 1);
           }
+        }
+      }
+    }
+  }
+
+  const Eigen::Vector3ub kBlackColor = Eigen::Vector3ub::Zero();
+  for (auto& point3D : points3D_) {
+    if (color_sums.count(point3D.first)) {
+      Eigen::Vector3d color =
+          color_sums[point3D.first] / color_counts[point3D.first];
+      for (Eigen::Index i = 0; i < color.size(); ++i) {
+        color[i] = std::round(color[i]);
+      }
+      point3D.second.color = color.cast<uint8_t>();
+    } else {
+      point3D.second.color = kBlackColor;
+    }
+  }
+}
+
+Reconstruction::ImageSet_t Reconstruction::SelectImagesFromPath(
+    const std::string& path) {
+  Reconstruction::ImageSet_t images_select;
+
+  std::vector<std::string> image_paths = GetRecursiveFileList(path);
+
+  for (const auto& p : image_paths) {
+    LOG(INFO) << "image path: " << p << std::endl;
+    std::string camera_dir = GetPathBaseName(GetParentDir(p));
+    std::string image_name = GetPathBaseName(p);
+    std::string image_name_with_camera_dir = camera_dir + "/" + image_name;
+    const class Image* image = FindImageWithName(image_name_with_camera_dir);
+    images_select.imageIds.insert(image->ImageId());
+    images_select.imagePaths[image->ImageId()] = p;
+  }
+
+  return images_select;
+}
+
+struct HashFn {
+  int operator()(const std::array<int, 3>& c) const {
+    return std::hash<int>()(c[0] ^ c[1] ^ c[2]);
+  }
+};
+
+std::unordered_map<int, std::unordered_set<point3D_t>>
+Reconstruction::GetPoints3DIdsByMasks(const std::string& mask_path,
+                                      const std::string& label_json_file) {
+
+  const nlohmann::json nodesJson = ReadJsonFile(label_json_file);
+
+  using LabelColor = std::array<int, 3>;
+
+  std::vector<nlohmann::json> jsonLabels =
+      nodesJson.get<std::vector<nlohmann::json>>();
+
+  std::unordered_map<int, LabelColor> label_to_color;
+
+  for (const auto& label : jsonLabels) {
+    int label_id = label["object_id"];
+    LabelColor color = {label["color"][0], label["color"][1], label["color"][2]};
+    label_to_color[label_id] = color;
+  }
+
+  std::unordered_map<LabelColor, int, HashFn> color_to_label;
+
+  for (const auto& [label, color] : label_to_color) {
+    color_to_label[color] = label;
+  }
+
+  ImageSet_t images_select = SelectImagesFromPath(mask_path);
+
+  std::unordered_map<int, std::unordered_set<point3D_t>> point3D_ids;
+
+  for (const auto& [img_id, img_file] : images_select.imagePaths) {
+    const class Image& image = Image(img_id);
+    if (!image.IsRegistered())
+      continue;
+
+    Bitmap bitmap;
+    if (!bitmap.Read(img_file.string())) {
+      LOG(WARNING) << StringPrintf("Could not read image %s at path %s.",
+                                   image.Name().c_str(),
+                                   img_file.string().c_str())
+                   << std::endl;
+      continue;
+    }
+
+    for (const Point2D& point2D : image.Points2D()) {
+      if (point2D.HasPoint3D()) {
+        BitmapColor<float> color;
+        if (bitmap.InterpolateBilinear(
+                point2D.xy(0) - 0.5, point2D.xy(1) - 0.5, &color)) {
+          LabelColor thisColor = {static_cast<int>(std::round(color.r)),
+                                  static_cast<int>(std::round(color.g)),
+                                  static_cast<int>(std::round(color.b))};
+          if (color_to_label.count(thisColor) > 0) {  
+            // this point2d has a label
+            int label = color_to_label[thisColor];
+            if (point3D_ids.count(label) == 0)
+              point3D_ids[label] = std::unordered_set<point3D_t>();
+            point3D_ids[label].insert(point2D.point3D_id);
+          }
+        }
+      }
+    }
+  }
+
+  return point3D_ids;
+}
+
+void Reconstruction::ExtractColorsForProvidedImages(const std::string& path) {
+  std::unordered_map<point3D_t, Eigen::Vector3d> color_sums;
+  std::unordered_map<point3D_t, size_t> color_counts;
+
+  ImageSet_t images_select = SelectImagesFromPath(path);
+
+  for (const auto& [img_id, img_path] : images_select.imagePaths) {
+    LOG(INFO) << "image id: " << img_id << " image path: " << img_path
+              << std::endl;
+    const class Image& image = Image(img_id);
+    if (!image.IsRegistered()) {
+      continue;
+    }
+    const std::string image_path = img_path.string();
+
+    Bitmap bitmap;
+    if (!bitmap.Read(image_path)) {
+      LOG(WARNING) << StringPrintf("Could not read image %s at path %s.",
+                                   image.Name().c_str(),
+                                   image_path.c_str())
+                   << std::endl;
+      continue;
+    }
+
+    for (const Point2D& point2D : image.Points2D()) {
+      if (point2D.HasPoint3D()) {
+        BitmapColor<float> color;
+        // COLMAP assumes that the upper left pixel center is (0.5, 0.5).
+        LOG(INFO) << "point2D: " << point2D.xy(0) << " " << point2D.xy(1)
+                  << std::endl;
+        if (bitmap.InterpolateBilinear(
+                point2D.xy(0) - 0.5, point2D.xy(1) - 0.5, &color)) {
+          if (color_sums.count(point2D.point3D_id)) {
+            Eigen::Vector3d& color_sum = color_sums[point2D.point3D_id];
+            color_sum(0) += color.r;
+            color_sum(1) += color.g;
+            color_sum(2) += color.b;
+            color_counts[point2D.point3D_id] += 1;
+          } else {
+            color_sums.emplace(point2D.point3D_id,
+                               Eigen::Vector3d(color.r, color.g, color.b));
+            color_counts.emplace(point2D.point3D_id, 1);
+          }
+        }
+      }
+    }
+  }
+
+  const Eigen::Vector3ub kBlackColor = Eigen::Vector3ub::Zero();
+  for (auto& point3D : points3D_) {
+    if (color_sums.count(point3D.first)) {
+      Eigen::Vector3d color =
+          color_sums[point3D.first] / color_counts[point3D.first];
+      for (Eigen::Index i = 0; i < color.size(); ++i) {
+        color[i] = std::round(color[i]);
+      }
+      point3D.second.color = color.cast<uint8_t>();
+    } else {
+      point3D.second.color = kBlackColor;
+    }
+  }
+}
+
+void Reconstruction::ExtractLabeledSubConstructions(const std::string& mask_path,
+                                    const std::string& label_json,
+                                    const std::string& out_path,
+                                    const double threshold) {
+  std::unordered_map<int, std::unordered_set<point3D_t>> point3D_ids =
+      GetPoints3DIdsByMasks(mask_path, label_json);
+
+  for (const auto& [obj_id, p3D_ids] : point3D_ids) {
+    Reconstruction obj_reconstruction;
+    for (const auto& camera : cameras_) {
+      obj_reconstruction.AddCamera(camera.second);
+    }
+
+    for (const auto& image : images_) {
+      class Image new_image = image.second;
+      new_image.SetRegistered(false);
+      const auto num_points2D = new_image.NumPoints2D();
+      for (point2D_t point2D_idx = 0; point2D_idx < num_points2D;
+           ++point2D_idx) {
+        new_image.ResetPoint3DForPoint2D(point2D_idx);
+      }
+      obj_reconstruction.AddImage(std::move(new_image));
+    }
+
+    std::unordered_set<image_t> registered_image_ids;
+    for (const auto& point3D_id : p3D_ids) {
+      const struct Point3D& point3D = Point3D(point3D_id);
+      for (const auto& track_el : point3D.track.Elements()) {
+        if (registered_image_ids.count(track_el.image_id) == 0) {
+          obj_reconstruction.RegisterImage(track_el.image_id);
+          registered_image_ids.insert(track_el.image_id);
+        }
+      }
+      obj_reconstruction.AddPoint3D(point3D.xyz, point3D.track, point3D.color);
+    }
+
+    // loop through original points and add points near the object
+    for (const auto& point3D : points3D_) {
+      if (obj_reconstruction.points3D_.count(point3D.first) > 0)
+        continue;
+
+      int counter = 0; // counter for the number of points near the 3D points
+      for (const auto& obj_point3D : obj_reconstruction.points3D_) {
+        if ((point3D.second.xyz - obj_point3D.second.xyz).norm() < 0.2) { // Adjust the threshold as needed
+          if (++counter > 3) {
+            obj_reconstruction.AddPoint3D(point3D.second.xyz, Track(),
+                                          point3D.second.color);
+            counter = 0;
+            break;
+          }
+        }
+      }
+    }
+    
+    std::string dir = out_path + "/object_" + std::to_string(obj_id);
+    CreateDirIfNotExists(dir, /*recursive=*/true);
+    obj_reconstruction.Write(dir);
+  }
+}
+
+void Reconstruction::ExtractPly(const std::string& ply_path, const std::string& out_path, const double threshold) {
+  std::vector<PlyPoint> outputPly;
+  const auto inputPly = ReadPly(ply_path);
+  LOG(INFO) << "reference model has " << points3D_.size() << " points" << std::endl;
+  LOG(INFO) << "input ply model has " << inputPly.size() << " points" << std::endl;
+  for (const auto& ply_point : inputPly) {
+    int counter = 0; // counter for the number of points near the 3D points
+    Eigen::Vector3d pos {ply_point.x, ply_point.y, ply_point.z};
+    for (const auto& point3D : points3D_) {
+      double distance = (pos - point3D.second.xyz).norm();
+      if (distance < threshold) {
+        LOG(INFO) << "distance: " << distance << " counter: " << counter << std::endl;
+        if (++counter > 3)
+        {
+          outputPly.push_back(ply_point);
+          counter = 0;
+          break;
+        }
+      }
+    }
+  }
+  CreateDirIfNotExists(out_path, /*recursive=*/true);
+  std::string out_path_ply = out_path + "/output.ply";
+  WriteBinaryPlyPoints(out_path_ply, outputPly, /* write normal */ true, /* write rgb */ true);
+}
+
+void Reconstruction::ReColorPoints3D(const std::string& path) {
+  std::unordered_map<point3D_t, Eigen::Vector3d> color_sums;
+  std::unordered_map<point3D_t, size_t> color_counts;
+
+  ImageSet_t images_select = SelectImagesFromPath(path);
+
+  BitmapColor<float> color;
+  Bitmap bitmap;
+
+  for (auto& point3D : points3D_) {
+    LOG(INFO) << "point3D id: " << point3D.first << std::endl;
+    for (const auto& image_id : images_select.imageIds) {
+      class Image& image = Image(image_id);
+      const class Camera& camera = Camera(image.CameraId());
+
+      // Project the 3D point to the image.
+      Eigen::Vector2d point2D = camera.ImgFromCam(
+          (image.CamFromWorld() * point3D.second.xyz).hnormalized());
+      
+      bitmap.Read(images_select.imagePaths[image_id].string());
+      if (bitmap.InterpolateBilinear(
+              point2D(0) - 0.5, point2D(1) - 0.5, &color)) {
+        LOG(INFO) << "color: " << color.r << " " << color.g << " " << color.b
+                  << std::endl;
+        if (color_sums.count(point3D.first)) {
+          Eigen::Vector3d& color_sum = color_sums[point3D.first];
+          color_sum(0) += color.r;
+          color_sum(1) += color.g;
+          color_sum(2) += color.b;
+          color_counts[point3D.first] += 1;
+        } else {
+          color_sums.emplace(point3D.first,
+                             Eigen::Vector3d(color.r, color.g, color.b));
+          color_counts.emplace(point3D.first, 1);
         }
       }
     }

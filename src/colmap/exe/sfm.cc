@@ -203,6 +203,83 @@ int RunColorExtractor(int argc, char** argv) {
   return EXIT_SUCCESS;
 }
 
+int RunColorExtractorProvidedImages(int argc, char** argv) {
+  std::string input_path;
+  std::string output_path;
+
+  OptionManager options;
+  options.AddImageOptions();
+  options.AddDefaultOption("input_path", &input_path);
+  options.AddRequiredOption("output_path", &output_path);
+  options.Parse(argc, argv);
+
+  Reconstruction reconstruction;
+  reconstruction.Read(input_path);
+  reconstruction.ExtractColorsForProvidedImages(*options.image_path);
+  reconstruction.Write(output_path);
+
+  return EXIT_SUCCESS;
+}
+
+int RunObjectExtractor(int argc, char** argv) {
+  std::string input_path;
+  std::string output_path;
+  std::string label_json;
+  double threshold;
+
+  OptionManager options;
+  options.AddImageOptions();
+  options.AddDefaultOption("input_path", &input_path);
+  options.AddRequiredOption("output_path", &output_path);
+  options.AddRequiredOption("label_json", &label_json);
+  options.AddRequiredOption("threshold", &threshold);
+  options.Parse(argc, argv);
+
+  Reconstruction reconstruction;
+  reconstruction.Read(input_path);
+  reconstruction.ExtractLabeledSubConstructions(*options.image_path, label_json, output_path, threshold);
+
+  return EXIT_SUCCESS;
+}
+
+int RunPlyExtractor(int argc, char** argv) {
+  std::string input_path;
+  std::string output_path;
+  std::string ply_path;
+  double threshold;
+
+  OptionManager options;
+  options.AddDefaultOption("input_path", &input_path);
+  options.AddRequiredOption("output_path", &output_path);
+  options.AddRequiredOption("ply_path", &ply_path);
+  options.AddRequiredOption("threshold", &threshold);
+  options.Parse(argc, argv);
+
+  Reconstruction reconstruction;
+  reconstruction.Read(input_path);
+  reconstruction.ExtractPly(ply_path, output_path, threshold);
+
+  return EXIT_SUCCESS;
+}
+
+int RunReColorPoints3D(int argc, char** argv) {
+  std::string input_path;
+  std::string output_path;
+
+  OptionManager options;
+  options.AddImageOptions();
+  options.AddDefaultOption("input_path", &input_path);
+  options.AddRequiredOption("output_path", &output_path);
+  options.Parse(argc, argv);
+
+  Reconstruction reconstruction;
+  reconstruction.Read(input_path);
+  reconstruction.ReColorPoints3D(*options.image_path);
+  reconstruction.Write(output_path);
+
+  return EXIT_SUCCESS;
+}
+
 int RunMapper(int argc, char** argv) {
   std::string input_path;
   std::string output_path;

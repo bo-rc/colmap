@@ -45,6 +45,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <boost/filesystem.hpp>
+
 #include <Eigen/Core>
 
 namespace colmap {
@@ -235,8 +237,54 @@ class Reconstruction {
   //                      root path and the name of the image.
   void ExtractColorsForAllImages(const std::string& path);
 
+  // Extract colors for all 3D points by computing the mean color of provided images.
+  // The provided images can be a subset of all images.
+  //
+  // @param path          Absolute or relative path to root folder of image.
+  //                      The image path is determined by concatenating the
+  //                      root path and the name of the image.
+  void ExtractColorsForProvidedImages(const std::string& path); 
+
+  // Recolor 3D points by projecting them to images and extracting the color.
+  // Warning: This computational complexity of this function is a slow O(n*m).
+  //
+  // @param path          Absolute or relative path to root folder of image.
+  //                      The image path is determined by concatenating the
+  //                      root path and the name of the image.
+  void ReColorPoints3D(const std::string& path);
+
+  // Get a map of 3D point IDs by label.
+  // The label is determined by the color of the 2D point in the mask image.
+  // The label definition is provided in the label_json_file, an example is:
+  // [
+  //   {
+  //     "object_id": 1,
+  //     "color": [255, 0, 0]
+  //   },
+  //   {
+  //     "object_id": 2,
+  //     "color": [0, 255, 0]
+  //   }
+  // ]
+  std::unordered_map<int, std::unordered_set<point3D_t>> GetPoints3DIdsByMasks(const std::string& mask_path, const std::string& label_json_file);
+
+  // helper struct to hold return result from SelectImagesFromPath
+  struct ImageSet_t {
+    std::unordered_set<image_t> imageIds;
+    std::unordered_map<image_t, boost::filesystem::path> imagePaths;
+  };
+
+  // derive a set of valid image ids from a dir of images
+  ImageSet_t SelectImagesFromPath(const std::string& mask_path);
+
+  // Extract sub-reconstructions from the current reconstruction based on label masks.
+  void ExtractLabeledSubConstructions(const std::string& mask_path, const std::string& label_json, const std::string& out_path, const double threshold);
+
   // Create all image sub-directories in the given path.
   void CreateImageDirs(const std::string& path) const;
+
+  // Extract a subset of a PLY file based on the overlap with the 3D points.
+  void ExtractPly(const std::string& ply_path, const std::string& out_path, const double threshold);
 
  private:
   std::tuple<Eigen::Vector3d, Eigen::Vector3d, Eigen::Vector3d>

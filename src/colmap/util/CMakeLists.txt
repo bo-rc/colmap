@@ -48,6 +48,7 @@ COLMAP_ADD_LIBRARY(
         timer.h timer.cc
         types.h
         version.h version.cc
+        json_utils.h
     PUBLIC_LINK_LIBS
         Boost::filesystem
         Eigen3::Eigen
