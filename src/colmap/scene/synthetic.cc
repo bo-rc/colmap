@@ -59,13 +59,11 @@ void SynthesizeExhaustiveMatches(double inlier_match_ratio,
   const std::vector<image_t>& reg_image_ids = reconstruction->RegImageIds();
   for (size_t image_idx1 = 0; image_idx1 < reg_image_ids.size(); ++image_idx1) {
     const auto& image1 = reconstruction->Image(reg_image_ids[image_idx1]);
-    const Eigen::Matrix3d K1 =
-        reconstruction->Camera(image1.CameraId()).CalibrationMatrix();
+    const Eigen::Matrix3d K1 = image1.CameraPtr()->CalibrationMatrix();
     const auto num_points2D1 = image1.NumPoints2D();
     for (size_t image_idx2 = 0; image_idx2 < image_idx1; ++image_idx2) {
       const auto& image2 = reconstruction->Image(reg_image_ids[image_idx2]);
-      const Eigen::Matrix3d K2 =
-          reconstruction->Camera(image2.CameraId()).CalibrationMatrix();
+      const Eigen::Matrix3d K2 = image2.CameraPtr()->CalibrationMatrix();
       const auto num_points2D2 = image2.NumPoints2D();
 
       TwoViewGeometry two_view_geometry;
@@ -131,9 +129,9 @@ void SynthesizeChainedMatches(double inlier_match_ratio,
     const auto image_pair =
         Database::PairIdToImagePair(two_view_geometry.first);
     const auto& image1 = reconstruction->Image(image_pair.first);
-    const auto& camera1 = reconstruction->Camera(image1.CameraId());
+    const auto& camera1 = *image1.CameraPtr();
     const auto& image2 = reconstruction->Image(image_pair.second);
-    const auto& camera2 = reconstruction->Camera(image2.CameraId());
+    const auto& camera2 = *image2.CameraPtr();
     two_view_geometry.second.config = TwoViewGeometry::CALIBRATED;
     two_view_geometry.second.cam2_from_cam1 =
         image2.CamFromWorld() * Inverse(image1.CamFromWorld());
@@ -166,7 +164,8 @@ void SynthesizeDataset(const SyntheticDatasetOptions& options,
   THROW_CHECK_LE(options.num_cameras, options.num_images);
   THROW_CHECK_GE(options.num_points3D, 0);
   THROW_CHECK_GE(options.num_points2D_without_point3D, 0);
-  THROW_CHECK_GE(options.point2D_stddev, 0);
+  THROW_CHECK_GE(options.point2D_stddev, 0.);
+  THROW_CHECK_GE(options.prior_position_stddev, 0.);
 
   // Synthesize cameras.
   std::vector<camera_t> camera_ids(options.num_cameras);
@@ -277,6 +276,38 @@ void SynthesizeDataset(const SyntheticDatasetOptions& options,
         auto& point3D = reconstruction->Point3D(point2D.point3D_id);
         point3D.track.AddElement(image_id, point2D_idx);
       }
+    }
+
+    if (options.use_prior_position) {
+      const Eigen::Vector3d noise(
+          RandomGaussian<double>(0, options.prior_position_stddev),
+          RandomGaussian<double>(0, options.prior_position_stddev),
+          RandomGaussian<double>(0, options.prior_position_stddev));
+
+      PosePrior noisy_prior(proj_center + noise,
+                            PosePrior::CoordinateSystem::CARTESIAN);
+
+      if (options.prior_position_stddev > 0.) {
+        noisy_prior.position_covariance = options.prior_position_stddev *
+                                          options.prior_position_stddev *
+                                          Eigen::Matrix3d::Identity();
+      } else {
+        noisy_prior.position_covariance = Eigen::Matrix3d::Identity();
+      }
+
+      if (options.use_geographic_coords_prior) {
+        static const GPSTransform gps_trans;
+
+        static const double lat0 = 47.37851943807808;
+        static const double lon0 = 8.549099927632087;
+        static const double alt0 = 451.5;
+
+        noisy_prior.position =
+            gps_trans.ENUToEll({noisy_prior.position}, lat0, lon0, alt0)[0];
+        noisy_prior.coordinate_system = PosePrior::CoordinateSystem::WGS84;
+      }
+
+      database->WritePosePrior(image_id, noisy_prior);
     }
 
     image.SetImageId(image_id);
