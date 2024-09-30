@@ -1,6 +1,55 @@
 COLMAP
 ======
 
+Build
+-----
+
+Make sure you checkout the `dev` branch:
+```bash
+git checkout dev
+```
+
+If you have conda installed, temporarily disable it so all libs can be located correctly:
+```bash
+mv ~/anaconda3/ ~/anaconda3_tmp
+```
+
+run cmake:
+```bash
+mkdir build_dev
+cd build_dev
+cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=native
+```
+
+if the CUDA compute capability `native` does not work on your machine, determine it manually:
+```bash
+nvidia-smi --query-gpu=compute_cap --format=csv
+# shows:
+# compute_cap
+# 8.9
+# 8.9
+# so the cmake cmd becomes:
+cmake .. -GNinja -DCMAKE_CUDA_ARCHITECTURES=89
+```
+
+run make:
+```bash
+ninja -j48 # use 48 threads
+```
+
+run install:
+```bash
+sudo ninja install
+```
+
+`ninja` is optional, native `cmake` and `sudo make install` works fine too.
+
+(optional) restore `conda`:
+```bash
+mv ~/anaconda3_tmp/ ~/anaconda3
+```
+
+
 About
 -----
 
