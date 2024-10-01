@@ -35,11 +35,75 @@
 #include "base/reconstruction_manager.h"
 #include "sfm/incremental_mapper.h"
 #include "util/threading.h"
+#include <map>
+#include <fstream>
 
 namespace colmap {
 
 struct IncrementalMapperOptions {
  public:
+  // Fix pose of the first image for some times
+  int first_image_fixed_frames = 8;
+  // Minimize proj times for each image before Icp
+  int min_proj_num = 1;
+  // If use lidar point cloud as constraint
+  bool if_add_lidar_constraint = true;
+  // Lidar point cloud file
+  std::string lidar_pointcloud_path;
+  // If use image poses initial guess
+  bool if_import_pose_prior = false; 
+  // Image poses initial guess file
+  std::string image_pose_prior_path;
+  // File to save image poses
+  std::string image_pose_save_folder;
+  // If correspond image feature points to lidar points
+  bool if_add_lidar_corresponding = true;
+  // If show correspondence of image feature points to lidar points on ui
+  bool if_add_lidar_display = true;
+  // Search radius in kdtree
+  double kdtree_max_search_range = 1.5;
+  double kdtree_min_search_range = 0.2;
+  double search_range_drop_speed = 0.1;
+  // Sphere radius in global bundle adjustment
+  double ba_spherical_search_radius = 40;
+  // Register a new image, 
+  // lidar point cloud proj to this image 
+  // and images that have enough feature matches to this image
+  int ba_match_features_threshold = 200;
+  // Optimal weight for proj lidar point
+  double proj_lidar_constraint_weight = 10.0;
+  // Optimal weight for Icp lidar point
+  double icp_lidar_constraint_weight = 1000.0;
+  // Optimal weight for Icp ground lidar point
+  double icp_ground_lidar_constraint_weight = 10000.0;
+  // Max error after proj optimization
+  double proj_max_dist_error = 10;
+  // Max error after icp optimization
+  double icp_max_dist_error = 2;
+  // Origin image size * depth_image_scale = depth image size
+  double depth_image_scale = 0.2;
+  // Projection scale
+  int max_proj_scale = 10;
+  int min_proj_scale = 2;
+  double min_proj_dist = 2;
+  // Depth of the projection pyramid
+  double choose_meter = 40.0;
+  // If a lidar point is too close to the image, not proj
+  double min_lidar_proj_dist = 0.5;
+  // If save proj image
+  bool if_save_depth_image = false;
+  // Images folder
+  std::string original_image_folder;
+  // Proj images folder
+  std::string depth_image_folder;
+  // If save lidar points in a pyramid for test
+  bool if_save_lidar_frame = false;
+  std::string lidar_frame_folder;
+  // Size of the submap for cutting the lidar map
+  double submap_length = 1.0;
+  double submap_width = 1.0;
+  double submap_height = 1.0;
+ 
   // The minimum number of matches for inlier matches to be considered.
   int min_num_matches = 15;
 
@@ -47,7 +111,7 @@ struct IncrementalMapperOptions {
   bool ignore_watermarks = false;
 
   // Whether to reconstruct multiple sub-models.
-  bool multiple_models = true;
+  bool multiple_models = false;
 
   // The number of sub-models to reconstruct.
   int max_num_models = 50;
@@ -64,9 +128,16 @@ struct IncrementalMapperOptions {
   // The image identifiers used to initialize the reconstruction. Note that
   // only one or both image identifiers can be specified. In the former case,
   // the second image is automatically determined.
-  int init_image_id1 = -1;
+  int init_image_id1 = 1;
   int init_image_id2 = -1;
 
+  double init_image_x = 0;
+  double init_image_y = 0;
+  double init_image_z = 0;
+  double init_image_roll = 0;
+  double init_image_pitch = 0;
+  double init_image_yaw = 0;
+  
   // The number of trials to initialize the reconstruction.
   int init_num_trials = 200;
 
@@ -82,9 +153,9 @@ struct IncrementalMapperOptions {
   double max_extra_param = 1.0;
 
   // Which intrinsic parameters to optimize during the reconstruction.
-  bool ba_refine_focal_length = true;
+  bool ba_refine_focal_length = false;
   bool ba_refine_principal_point = false;
-  bool ba_refine_extra_params = true;
+  bool ba_refine_extra_params = false;
 
   // The minimum number of residuals per bundle adjustment problem to
   // enable multi-threading solving of the problems.
@@ -108,7 +179,7 @@ struct IncrementalMapperOptions {
   // The growth rates after which to perform global bundle adjustment.
   double ba_global_images_ratio = 1.1;
   double ba_global_points_ratio = 1.1;
-  int ba_global_images_freq = 500;
+  int ba_global_images_freq = 5;
   int ba_global_points_freq = 250000;
 
   // Ceres solver function tolerance for global bundle adjustment
@@ -139,6 +210,9 @@ struct IncrementalMapperOptions {
   IncrementalMapper::Options Mapper() const;
   IncrementalTriangulator::Options Triangulation() const;
   BundleAdjustmentOptions LocalBundleAdjustment() const;
+  lidar::PcdProjectionOptions PcdProjector() const;
+  // lidar::SearchClosestPointOptions ClosestSearcher() const; 
+  // lidar::KdtreeOptions KdtreeSearcher() const; 
   BundleAdjustmentOptions GlobalBundleAdjustment() const;
   ParallelBundleAdjuster::Options ParallelGlobalBundleAdjustment() const;
 
@@ -167,21 +241,25 @@ class IncrementalMapperController : public Thread {
     LAST_IMAGE_REG_CALLBACK,
   };
 
-  IncrementalMapperController(const IncrementalMapperOptions* options,
+  IncrementalMapperController(IncrementalMapperOptions* options,
                               const std::string& image_path,
                               const std::string& database_path,
                               ReconstructionManager* reconstruction_manager);
 
+  int OriginImagesNum();
+  DatabaseCache database_cache_;//数据都在这里面存着
  private:
   void Run();
   bool LoadDatabase();
+  bool LoadPose();
   void Reconstruct(const IncrementalMapper::Options& init_mapper_options);
 
   const IncrementalMapperOptions* options_;
   const std::string image_path_;
   const std::string database_path_;
   ReconstructionManager* reconstruction_manager_;
-  DatabaseCache database_cache_;
+  //Tx, Ty, Tz, qw, qx, qy, qz
+  std::map<uint32_t, std::vector<double>> image_poses_;
 };
 
 // Globally filter points and images in mapper.

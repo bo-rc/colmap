@@ -61,6 +61,16 @@ BundleAdjustmentWidget::BundleAdjustmentWidget(MainWindow* main_window,
       &options->bundle_adjustment->solver_options.parameter_tolerance,
       "parameter_tolerance [10eX]", -1000, 1000);
 
+  AddOptionBool(
+      &options->bundle_adjustment->if_add_lidar_constraint,
+      "if_add_lidar_constraint");
+  AddOptionDouble(
+      &options->bundle_adjustment->icp_lidar_constraint_weight,
+      "icp_nonground_lidar_constraint_weight", -1);
+  AddOptionDouble(
+      &options->bundle_adjustment->icp_ground_lidar_constraint_weight,
+      "icp_ground_lidar_constraint_weight", -1);
+  
   AddOptionBool(&options->bundle_adjustment->refine_focal_length,
                 "refine_focal_length");
   AddOptionBool(&options->bundle_adjustment->refine_principal_point,
@@ -98,7 +108,7 @@ void BundleAdjustmentWidget::Run() {
 
   // Normalize scene for numerical stability and
   // to avoid large scale changes in viewer.
-  reconstruction_->Normalize();
+  //   reconstruction_->Normalize(); // we don't need this due to lidar points alignment
 
   thread_control_widget_->StartThread("Bundle adjusting...", true,
                                       std::move(thread));

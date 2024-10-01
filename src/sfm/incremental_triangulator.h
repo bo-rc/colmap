@@ -53,10 +53,10 @@ class IncrementalTriangulator {
     double continue_max_angle_error = 2.0;
 
     // Maximum reprojection error in pixels to merge triangulations.
-    double merge_max_reproj_error = 4.0;
+    double merge_max_reproj_error = 8.0;
 
     // Maximum reprojection error to complete an existing triangulation.
-    double complete_max_reproj_error = 4.0;
+    double complete_max_reproj_error = 8.0;
 
     // Maximum transitivity for track completion.
     int complete_max_transitivity = 5;

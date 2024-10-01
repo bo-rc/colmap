@@ -248,7 +248,13 @@ void ModelViewerWidget::paintGL() {
 
   // Points
   point_painter_.Render(pmv_matrix, point_size_);
+  // lidar points
+  lidar_point_painter_.Render(pmv_matrix, lidar_point_size_);
+  lidar_map_painter_.Render(pmv_matrix, lidar_point_size_);
+  // line between point to point
   point_connection_painter_.Render(pmv_matrix, width(), height(), 1);
+  point2lidar_connection_painter_.Render(pmv_matrix, width(), height(), 1);
+  point2lidar_in_global_connection_painter_.Render(pmv_matrix, width(), height(), 1);
 
   // Images
   image_line_painter_.Render(pmv_matrix, width(), height(), 1);
@@ -274,6 +280,8 @@ void ModelViewerWidget::ReloadReconstruction() {
 
   cameras = reconstruction->Cameras();
   points3D = reconstruction->Points3D();
+  lidar_points = reconstruction->LidarPoints();
+  lidar_points_in_global_ = reconstruction->LidarPointsInGlobal();
   reg_image_ids = reconstruction->RegImageIds();
 
   images.clear();
@@ -292,6 +300,8 @@ void ModelViewerWidget::ClearReconstruction() {
   cameras.clear();
   images.clear();
   points3D.clear();
+  lidar_points.clear();
+  lidar_points_in_global_.clear();
   reg_image_ids.clear();
   reconstruction = nullptr;
   Upload();
@@ -649,6 +659,12 @@ void ModelViewerWidget::SetupPainters() {
   coordinate_grid_painter_.Setup();
 
   point_painter_.Setup();
+  if (options_->mapper->if_add_lidar_display && options_->mapper->if_add_lidar_corresponding){
+    lidar_point_painter_.Setup();
+    point2lidar_connection_painter_.Setup();
+    point2lidar_in_global_connection_painter_.Setup();
+  }
+  lidar_map_painter_.Setup();
   point_connection_painter_.Setup();
 
   image_line_painter_.Setup();
@@ -662,6 +678,7 @@ void ModelViewerWidget::SetupPainters() {
 
 void ModelViewerWidget::SetupView() {
   point_size_ = kInitPointSize;
+  lidar_point_size_ = kInitPointSize;
   image_size_ = kInitImageSize;
   focus_distance_ = kInitFocusDistance;
   model_view_matrix_.setToIdentity();
@@ -677,6 +694,11 @@ void ModelViewerWidget::Upload() {
   ComposeProjectionMatrix();
 
   UploadPointData();
+  if (options_->mapper->if_add_lidar_display && options_->mapper->if_add_lidar_corresponding){
+    UploadLidarPointData();
+    UploadPoint2LidarConnectionData();
+    UploadPoint2LidarConnectionInGlobalData();
+  }
   UploadImageData();
   UploadMovieGrabberData();
   UploadPointConnectionData();
@@ -740,9 +762,68 @@ void ModelViewerWidget::UploadCoordinateGridData() {
   coordinate_axes_painter_.Upload(axes_data);
 }
 
-void ModelViewerWidget::UploadPointData(const bool selection_mode) {
+void ModelViewerWidget::UploadLidarMapData() {
   makeCurrent();
 
+  if (lidar_map_ptr_ == nullptr){
+    if (options_->mapper->lidar_pointcloud_path ==""){
+      std::cout << "Point cloud path undefined." << std::endl; 
+      return;
+    }
+    lidar_map_path_ = options_->mapper->lidar_pointcloud_path;
+
+    lidar_map_ptr_.reset(new lidar::PointCloudProcess(lidar_map_path_));
+    if (!lidar_map_ptr_->LoadDownsizedMap()){
+      std::cout << "Load lidar map fail"<<std::endl;
+      std::cout << std::endl;
+
+    }
+  } else {
+    if (lidar_map_path_ != options_->mapper->lidar_pointcloud_path) {
+      lidar_map_path_ = options_->mapper->lidar_pointcloud_path;
+
+      lidar_map_ptr_.reset(new lidar::PointCloudProcess(lidar_map_path_));
+      if (!lidar_map_ptr_->LoadDownsizedMap()){
+        std::cout << "Load lidar map fail"<<std::endl;
+        std::cout << std::endl;
+      }
+    }
+  }
+
+  lidar::LidarPointcloudPtr downsized_map_ptr = lidar_map_ptr_->GetDownsizedMap();
+
+  std::vector<LidarPointPainter::Data> data;
+
+  data.reserve(downsized_map_ptr->points.size());
+
+  for (auto pt : downsized_map_ptr->points){
+    LidarPointPainter::Data painter_lidar_point;
+
+    Eigen::Vector3f xyz = pt.getVector3fMap();
+    painter_lidar_point.x = xyz(0);
+    painter_lidar_point.y = xyz(1);
+    painter_lidar_point.z = xyz(2);
+
+    painter_lidar_point.r = 0.0f;
+    painter_lidar_point.g = 0.0f;
+    painter_lidar_point.b = 0.0f;
+    painter_lidar_point.a = 1.0f;
+
+    data.push_back(painter_lidar_point);
+  }
+
+  lidar_map_painter_.Upload(data);
+
+  update();
+}
+
+void ModelViewerWidget::RemoveLidarMapData(){
+  lidar_map_painter_.Setup();
+  update();
+}
+
+void ModelViewerWidget::UploadPointData(const bool selection_mode) {
+  makeCurrent();
   std::vector<PointPainter::Data> data;
 
   // Assume we want to display the majority of points
@@ -819,6 +900,124 @@ void ModelViewerWidget::UploadPointData(const bool selection_mode) {
   }
 
   point_painter_.Upload(data);
+}
+
+void ModelViewerWidget::UploadLidarPointData(){
+  makeCurrent();
+  std::vector<LidarPointPainter::Data> data;
+
+  data.reserve(lidar_points.size());
+
+  for (const auto& lidar_pt : lidar_points){
+    LidarPointPainter::Data painter_lidar_point;
+
+    Eigen::Vector3f xyz = lidar_pt.second.LidarXYZ().cast<float>();
+    painter_lidar_point.x = xyz(0);
+    painter_lidar_point.y = xyz(1);
+    painter_lidar_point.z = xyz(2);
+
+    Eigen::Vector3f rgb = lidar_pt.second.Color().cast<float>()/255.0f;
+    painter_lidar_point.r = rgb(0);
+    painter_lidar_point.g = rgb(1);
+    painter_lidar_point.b = rgb(2);
+    painter_lidar_point.a = 1.0f;
+
+    data.push_back(painter_lidar_point);
+  }
+  
+  lidar_point_painter_.Upload(data);
+}
+
+void ModelViewerWidget::UploadPoint2LidarConnectionData(){
+  makeCurrent();
+  
+  std::vector<LinePainter::Data> point_to_lidar_line_data;
+  point_to_lidar_line_data.reserve(lidar_points.size());
+
+  for (const auto& lidar_pt : lidar_points){
+    LinePainter::Data line;
+    auto i_pt_iter = points3D.find(lidar_pt.first);
+    if (i_pt_iter == points3D.end()){
+      continue;
+    } 
+    // lidar point
+    PointPainter::Data l_pt;
+
+    Eigen::Vector3f l_xyz = lidar_pt.second.LidarXYZ().cast<float>();
+    l_pt.x = l_xyz(0);
+    l_pt.y = l_xyz(1);
+    l_pt.z = l_xyz(2);
+
+    Eigen::Vector3f l_rgb = lidar_pt.second.Color().cast<float>()/255.0f;
+    l_pt.r = l_rgb(0);
+    l_pt.g = l_rgb(1);
+    l_pt.b = l_rgb(2);
+    l_pt.a = 1.0f;
+
+    // image point
+    PointPainter::Data i_pt;
+    Eigen::Vector3f i_xyz = i_pt_iter->second.XYZ().cast<float>();
+    i_pt.x = i_xyz(0);
+    i_pt.y = i_xyz(1);
+    i_pt.z = i_xyz(2);
+    Eigen::Vector3f i_rgb = i_pt_iter->second.Color().cast<float>()/255.0f;
+    i_pt.r = i_rgb(0);
+    i_pt.g = i_rgb(1);
+    i_pt.b = i_rgb(2);
+    i_pt.a = 1.0f;
+
+    line.point1 = l_pt;
+    line.point2 = i_pt;
+    point_to_lidar_line_data.push_back(line);
+  }
+
+  point2lidar_connection_painter_.Upload(point_to_lidar_line_data);
+}
+
+void ModelViewerWidget::UploadPoint2LidarConnectionInGlobalData(){
+  makeCurrent();
+  
+  std::vector<LinePainter::Data> point_to_lidar_line_data;
+  point_to_lidar_line_data.reserve(lidar_points_in_global_.size());
+
+  for (const auto& lidar_pt : lidar_points_in_global_){
+    LinePainter::Data line;
+    auto i_pt_iter = points3D.find(lidar_pt.first);
+    if (i_pt_iter == points3D.end()){
+      continue;
+    } 
+    // lidar point
+    PointPainter::Data l_pt;
+
+    Eigen::Vector3f l_xyz = lidar_pt.second.LidarXYZ().cast<float>();
+    l_pt.x = l_xyz(0);
+    l_pt.y = l_xyz(1);
+    l_pt.z = l_xyz(2);
+
+    Eigen::Vector3f l_rgb = lidar_pt.second.Color().cast<float>()/255.0f;
+    l_pt.r = l_rgb(0);
+    l_pt.g = l_rgb(1);
+    l_pt.b = l_rgb(2);
+    l_pt.a = 1.0f;
+
+    // image point
+    PointPainter::Data i_pt;
+    Eigen::Vector3f i_xyz = i_pt_iter->second.XYZ().cast<float>();
+    i_pt.x = i_xyz(0);
+    i_pt.y = i_xyz(1);
+    i_pt.z = i_xyz(2);
+    Eigen::Vector3f i_rgb = i_pt_iter->second.Color().cast<float>()/255.0f;
+    i_pt.r = i_rgb(0);
+    i_pt.g = i_rgb(1);
+    i_pt.b = i_rgb(2);
+    i_pt.a = 1.0f;
+
+    line.point1 = l_pt;
+    line.point2 = i_pt;
+    point_to_lidar_line_data.push_back(line);
+  }
+
+  point2lidar_in_global_connection_painter_.Upload(point_to_lidar_line_data);
 }
 
 void ModelViewerWidget::UploadPointConnectionData() {

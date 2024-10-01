@@ -97,6 +97,12 @@ MapperInitializationOptionsWidget::MapperInitializationOptionsWidget(
   AddOptionInt(&options->mapper->mapper.init_min_num_inliers,
                "init_min_num_inliers");
   AddOptionDouble(&options->mapper->mapper.init_max_error, "init_max_error");
+  AddOptionDouble(&options->mapper->init_image_x, "init_image_x [m]");
+  AddOptionDouble(&options->mapper->init_image_y, "init_image_y [m]");
+  AddOptionDouble(&options->mapper->init_image_z, "init_image_z [m]");
+  AddOptionDouble(&options->mapper->init_image_roll, "init_image_roll [deg]");
+  AddOptionDouble(&options->mapper->init_image_pitch, "init_image_pitch [deg]");
+  AddOptionDouble(&options->mapper->init_image_yaw, "init_image_yaw [deg]");
   AddOptionDouble(&options->mapper->mapper.init_max_forward_motion,
                   "init_max_forward_motion");
   AddOptionDouble(&options->mapper->mapper.init_min_tri_angle,
@@ -158,8 +164,46 @@ MapperFilteringOptionsWidget::MapperFilteringOptionsWidget(
                   "filter_max_reproj_error [px]");
   AddOptionDouble(&options->mapper->mapper.filter_min_tri_angle,
                   "filter_min_tri_angle [deg]");
+  AddOptionDouble(&options->mapper->mapper.proj_max_dist_error,
+                  "depth_proj_max_dist_error [m]");
+  AddOptionDouble(&options->mapper->mapper.icp_max_dist_error,
+                  "icp_max_dist_error [m]");
 }
 
+MapperLidarConstraintingOptionsWidget::MapperLidarConstraintingOptionsWidget(
+    QWidget* parent, OptionManager* options)
+    : OptionsWidget(parent) {
+      AddOptionInt(&options->mapper->first_image_fixed_frames,"first_image_fixed_frames");
+      AddOptionBool(&options->mapper->if_add_lidar_constraint, "if_add_lidar_constraint");
+      AddOptionFilePath(&options->mapper->lidar_pointcloud_path, "lidar_map_path");
+      AddOptionBool(&options->mapper->if_import_pose_prior, "if_import_image_pose_prior"); 
+      AddOptionFilePath(&options->mapper->image_pose_prior_path, "image_pose_prior_path");
+      AddOptionDirPath(&options->mapper->image_pose_save_folder, "save_image_pose_folder");
+      AddOptionBool(&options->mapper->if_add_lidar_corresponding, "if_add_lidar_correspondence");
+      AddOptionBool(&options->mapper->if_add_lidar_display, "if_add_lidar_display");
+      AddOptionDouble(&options->mapper->proj_lidar_constraint_weight, "depth_proj_constraint_weight");
+      AddOptionDouble(&options->mapper->icp_lidar_constraint_weight, "icp_nonground_constraint_weight");
+      AddOptionDouble(&options->mapper->icp_ground_lidar_constraint_weight, "icp_ground_constraint_weight");
+      AddOptionInt(&options->mapper->min_proj_num,"depth_proj_association_num");
+      AddOptionDouble(&options->mapper->depth_image_scale, "depth_image_scale");
+      AddOptionDouble(&options->mapper->choose_meter,"max_depth_proj_dist");
+      AddOptionInt(&options->mapper->min_proj_scale, "min_depth_inflation");
+      AddOptionDouble(&options->mapper->min_proj_dist,"min_depth_proj_dist");
+      AddOptionInt(&options->mapper->max_proj_scale, "max_depth_inflation");
+      AddOptionDouble(&options->mapper->min_lidar_proj_dist,"min_lidar_proj_dist");
+      AddOptionBool(&options->mapper->if_save_depth_image, "if_save_depth_image");
+      AddOptionDirPath(&options->mapper->depth_image_folder, "save_depth_image_folder");
+      AddOptionBool(&options->mapper->if_save_lidar_frame, "if_save_lidar_pcd");
+      AddOptionDirPath(&options->mapper->lidar_frame_folder, "save_lidar_pcd_folder");
+      AddOptionDouble(&options->mapper->submap_length,"submap_length");
+      AddOptionDouble(&options->mapper->submap_width,"submap_width");
+      AddOptionDouble(&options->mapper->submap_height,"submap_height");
+      AddOptionDouble(&options->mapper->kdtree_max_search_range,"kdtree_max_search_dist");
+      AddOptionDouble(&options->mapper->kdtree_min_search_range,"kdtree_min_search_dist");
+      AddOptionDouble(&options->mapper->search_range_drop_speed,"kdtree_search_dist_drop");
+      AddOptionDouble(&options->mapper->ba_spherical_search_radius,"ba_sphere_radius");
+      AddOptionInt(&options->mapper->ba_match_features_threshold,"ba_min_matched_features");
+    }
 ReconstructionOptionsWidget::ReconstructionOptionsWidget(QWidget* parent,
                                                          OptionManager* options)
     : QWidget(parent) {
@@ -183,6 +227,8 @@ ReconstructionOptionsWidget::ReconstructionOptionsWidget(QWidget* parent,
                      tr("Bundle"));
   tab_widget->addTab(new MapperFilteringOptionsWidget(this, options),
                      tr("Filter"));
+  tab_widget->addTab(new MapperLidarConstraintingOptionsWidget(this, options),
+                     tr("Lidar"));                   
 
   grid->addWidget(tab_widget, 0, 0);
 }

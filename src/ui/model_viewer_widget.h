@@ -44,10 +44,12 @@
 #include "ui/line_painter.h"
 #include "ui/movie_grabber_widget.h"
 #include "ui/point_painter.h"
+#include "ui/lidar_point_painter.h"
 #include "ui/point_viewer_widget.h"
 #include "ui/render_options.h"
 #include "ui/triangle_painter.h"
 #include "util/option_manager.h"
+#include "lidar/ply.h"
 
 namespace colmap {
 
@@ -120,12 +122,15 @@ class ModelViewerWidget : public QOpenGLWidget,
   void SetImageSize(const float image_size);
 
   void SetBackgroundColor(const float r, const float g, const float b);
-
+  void UploadLidarMapData();
+  void RemoveLidarMapData();
   // Copy of current scene data that is displayed
   Reconstruction* reconstruction = nullptr;
   EIGEN_STL_UMAP(camera_t, Camera) cameras;
   EIGEN_STL_UMAP(image_t, Image) images;
   EIGEN_STL_UMAP(point3D_t, Point3D) points3D;
+  EIGEN_STL_UMAP(point3D_t, LidarPoint) lidar_points;
+  EIGEN_STL_UMAP(point3D_t, LidarPoint) lidar_points_in_global_;
   std::vector<image_t> reg_image_ids;
 
   QLabel* statusbar_status_label;
@@ -151,7 +156,9 @@ class ModelViewerWidget : public QOpenGLWidget,
   void UploadImageData(const bool selection_mode = false);
   void UploadImageConnectionData();
   void UploadMovieGrabberData();
-
+  void UploadLidarPointData();
+  void UploadPoint2LidarConnectionData();
+  void UploadPoint2LidarConnectionInGlobalData();
   void ComposeProjectionMatrix();
 
   float ZoomScale() const;
@@ -162,6 +169,7 @@ class ModelViewerWidget : public QOpenGLWidget,
 
   OptionManager* options_;
 
+  std::shared_ptr<lidar::PointCloudProcess> lidar_map_ptr_ = nullptr;
   QMatrix4x4 model_view_matrix_;
   QMatrix4x4 projection_matrix_;
 
@@ -169,7 +177,12 @@ class ModelViewerWidget : public QOpenGLWidget,
   LinePainter coordinate_grid_painter_;
 
   PointPainter point_painter_;
+  LidarPointPainter lidar_point_painter_;
+  LidarPointPainter lidar_map_painter_;
+
   LinePainter point_connection_painter_;
+  LinePainter point2lidar_connection_painter_;
+  LinePainter point2lidar_in_global_connection_painter_;
 
   LinePainter image_line_painter_;
   TrianglePainter image_triangle_painter_;
@@ -201,12 +214,15 @@ class ModelViewerWidget : public QOpenGLWidget,
 
   // Size of points (dynamic): does not require re-uploading of points.
   float point_size_;
+  float lidar_point_size_;
   // Size of image models (not dynamic): requires re-uploading of image models.
   float image_size_;
   // Near clipping plane.
   float near_plane_;
 
   float background_color_[3];
+
+  std::string lidar_map_path_;
 };
 
 }  // namespace colmap

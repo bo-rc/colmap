@@ -56,7 +56,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/CMakeHelper.cmake NO_POLICY_SCOPE)
 option(SIMD_ENABLED "Whether to enable SIMD optimizations" ON)
 option(OPENMP_ENABLED "Whether to enable OpenMP parallelization" ON)
 option(IPO_ENABLED "Whether to enable interprocedural optimization" ON)
-option(CUDA_ENABLED "Whether to enable CUDA, if available" ON)
+option(CUDA_ENABLED "Whether to enable CUDA, if available" OFF)
 option(GUI_ENABLED "Whether to enable the graphical UI" ON)
 option(OPENGL_ENABLED "Whether to enable OpenGL, if available" ON)
 option(TESTS_ENABLED "Whether to build test binaries" OFF)
@@ -65,6 +65,7 @@ option(PROFILING_ENABLED "Whether to enable google-perftools linker flags" OFF)
 option(CCACHE_ENABLED "Whether to enable compiler caching, if available" ON)
 option(CGAL_ENABLED "Whether to enable the CGAL library" ON)
 option(BOOST_STATIC "Whether to enable static boost library linker flags" ON)
+option(TEST_LIDAR_ENABLED "Whether to enable test images real-time display" ON)
 
 if(TESTS_ENABLED)
     enable_testing()
@@ -98,7 +99,12 @@ find_package(Boost REQUIRED COMPONENTS
              unit_test_framework)
 
 find_package(Eigen3 REQUIRED)
-
+set(Qt5_DIR /opt/homebrew/Cellar/qt@5/5.15.5_1/lib/cmake/Qt5)
+find_package(PCL REQUIRED)
+if (TEST_LIDAR_ENABLED)
+    find_package(OpenCV REQUIRED)
+    add_definitions(-DTEST_LIDAR_ENABLED)
+endif()
 find_package(FreeImage REQUIRED)
 
 find_package(FLANN REQUIRED)
@@ -350,6 +356,7 @@ include(GenerateVersionDefinitions)
 set(COLMAP_INCLUDE_DIRS
     ${Boost_INCLUDE_DIRS}
     ${EIGEN3_INCLUDE_DIRS}
+    ${PCL_INCLUDE_DIRS}
     ${GLOG_INCLUDE_DIRS}
     ${FLANN_INCLUDE_DIRS}
     ${LZ4_INCLUDE_DIRS}
@@ -370,6 +377,7 @@ set(COLMAP_EXTERNAL_LIBRARIES
     ${Boost_PROGRAM_OPTIONS_LIBRARY}
     ${Boost_SYSTEM_LIBRARY}
     ${GLOG_LIBRARIES}
+    ${PCL_LIBRARIES}
     ${FLANN_LIBRARIES}
     ${LZ4_LIBRARIES}
     ${FREEIMAGE_LIBRARIES}
@@ -394,6 +402,10 @@ if(CGAL_FOUND)
     list(APPEND COLMAP_LINK_DIRS ${CGAL_LIBRARIES_DIR})
 endif()
 
+if(OpenCV_FOUND)
+    list(APPEND COLMAP_INCLUDE_DIRS ${OpenCV_INCLUDE_DIRS})
+    list(APPEND COLMAP_EXTERNAL_LIBRARIES ${OpenCV_LIBS})
+endif()
 if(UNIX)
     list(APPEND COLMAP_EXTERNAL_LIBRARIES pthread)
 endif()
@@ -440,6 +452,7 @@ COLMAP_ADD_SOURCE_DIR(src/sfm SFM_SRCS *.h *.cc)
 COLMAP_ADD_SOURCE_DIR(src/tools TOOLS_SRCS *.h *.cc)
 COLMAP_ADD_SOURCE_DIR(src/ui UI_SRCS *.h *.cc)
 COLMAP_ADD_SOURCE_DIR(src/util UTIL_SRCS *.h *.cc)
+COLMAP_ADD_SOURCE_DIR(src/lidar LIDAR_SRCS *.h *.cc)
 
 # Add all of the source files to a regular library target, as using a custom
 # target does not allow us to set its C++ include directories (and thus
@@ -463,6 +476,8 @@ add_library(
     ${TOOLS_SRCS}
     ${UI_SRCS}
     ${UTIL_SRCS}
+    ${LIDAR_SRCS}
+
 )
 
 # Prevent the library from being compiled automatically.

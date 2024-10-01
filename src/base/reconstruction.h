@@ -50,6 +50,7 @@
 #include "optim/loransac.h"
 #include "util/alignment.h"
 #include "util/types.h"
+#include "lidar/lidar_point.h"
 
 namespace colmap {
 
@@ -102,7 +103,11 @@ class Reconstruction {
   inline const EIGEN_STL_UMAP(point3D_t, class Point3D) & Points3D() const;
   inline const std::unordered_map<image_pair_t, ImagePairStat>& ImagePairs()
       const;
+  inline const EIGEN_STL_UMAP(point3D_t, class LidarPoint) & LidarPoints() const;
+  inline const EIGEN_STL_UMAP(point3D_t, class LidarPoint) & LidarPointsInGlobal() const;
 
+  void ClearLidarPoints();
+  void ClearLidarPointsInGlobal();
   // Identifiers of all 3D points.
   std::unordered_set<point3D_t> Point3DIds() const;
 
@@ -111,6 +116,7 @@ class Reconstruction {
   inline bool ExistsImage(const image_t image_id) const;
   inline bool ExistsPoint3D(const point3D_t point3D_id) const;
   inline bool ExistsImagePair(const image_pair_t pair_id) const;
+  inline bool ExistsImagePair(const image_t image_id1, const image_t image_id2) const;
 
   // Load data from given `DatabaseCache`.
   void Load(const DatabaseCache& database_cache);
@@ -134,6 +140,8 @@ class Reconstruction {
   // Add new image.
   void AddImage(class Image image);
 
+  void AddLidarPoint(const point3D_t& point3D_id, LidarPoint& lidar_point);
+  void AddLidarPointInGlobal(const point3D_t& point3D_id, LidarPoint& lidar_point);
   // Add new 3D object, and return its unique ID.
   point3D_t AddPoint3D(
       const Eigen::Vector3d& xyz, Track track,
@@ -251,6 +259,7 @@ class Reconstruction {
                                 const std::unordered_set<image_t>& image_ids);
   size_t FilterAllPoints3D(const double max_reproj_error,
                            const double min_tri_angle);
+  size_t FilterLidarOutlier(const double max_proj_dist_error,const double max_icp_dist_error);
 
   // Filter observations that have negative depth.
   //
@@ -422,7 +431,11 @@ class Reconstruction {
   EIGEN_STL_UMAP(camera_t, class Camera) cameras_;
   EIGEN_STL_UMAP(image_t, class Image) images_;
   EIGEN_STL_UMAP(point3D_t, class Point3D) points3D_;
-
+  //Lidar points found by proj
+  EIGEN_STL_UMAP(point3D_t, class LidarPoint) lidar_points_;
+  //Lidar points found by Icp in global bundle
+  EIGEN_STL_UMAP(point3D_t, class LidarPoint) lidar_points_in_global_;
+  
   std::unordered_map<image_pair_t, ImagePairStat> image_pair_stats_;
 
   // { image_id, ... } where `images_.at(image_id).registered == true`.
@@ -502,6 +515,13 @@ const EIGEN_STL_UMAP(image_t, class Image) & Reconstruction::Images() const {
   return images_;
 }
 
+const EIGEN_STL_UMAP(point3D_t, class LidarPoint) & Reconstruction::LidarPoints() const{
+  return lidar_points_;
+}
+
+const EIGEN_STL_UMAP(point3D_t, class LidarPoint) & Reconstruction::LidarPointsInGlobal() const{
+  return lidar_points_in_global_;
+}
 const std::vector<image_t>& Reconstruction::RegImageIds() const {
   return reg_image_ids_;
 }
@@ -528,6 +548,11 @@ bool Reconstruction::ExistsPoint3D(const point3D_t point3D_id) const {
 }
 
 bool Reconstruction::ExistsImagePair(const image_pair_t pair_id) const {
+  return image_pair_stats_.find(pair_id) != image_pair_stats_.end();
+}
+
+bool Reconstruction::ExistsImagePair(const image_t image_id1, const image_t image_id2) const {
+  const image_pair_t pair_id = Database::ImagePairToPairId(image_id1, image_id2);
   return image_pair_stats_.find(pair_id) != image_pair_stats_.end();
 }
 

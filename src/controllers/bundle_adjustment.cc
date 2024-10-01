@@ -92,14 +92,73 @@ void BundleAdjustmentController::Run() {
   for (const image_t image_id : reg_image_ids) {
     ba_config.AddImage(image_id);
   }
-  ba_config.SetConstantPose(reg_image_ids[0]);
-  ba_config.SetConstantTvec(reg_image_ids[1], {0});
+
+  if (ba_options.if_add_lidar_constraint){
+    ClearLidarPoints();
+    IncrementalMapperOptions mapper_options = *options_.mapper;
+    std::string path = mapper_options.lidar_pointcloud_path;
+    LoadPointcloud(path, mapper_options.PcdProjector());
+    std::unordered_set<point3D_t> reg_point3D_ids = reconstruction_->Point3DIds();
+    for (point3D_t point3d_id : reg_point3D_ids) {
+
+      ba_config.AddVariablePoint(point3d_id);
+      
+      Point3D& point3D = reconstruction_->Point3D(point3d_id);
+      Eigen::Vector3d pt_xyz = point3D.XYZ();
+      Eigen::Vector6d lidar_pt;
+      if (lidar_pointcloud_process_->SearchNearestNeiborByKdtree(pt_xyz,lidar_pt)){
+        Eigen::Vector3d norm = lidar_pt.block(3,0,3,1);
+        Eigen::Vector3d l_pt = lidar_pt.block(0,0,3,1);
+        double d = 0 - l_pt.dot(norm);
+        Eigen::Vector4d plane;
+        plane << norm(0),norm(1),norm(2),d;
+        LidarPoint lidar_point(l_pt,plane);
+        const double dist2plane = lidar_point.ComputeDist(pt_xyz);
+        const double dist2point = lidar_point.ComputePointToPointDist(pt_xyz);
+        
+        if (dist2plane > 1 || dist2point > 2) continue;
+        if (std::abs(norm(1)/norm(0))>10 && std::abs(norm(1)/norm(2))>10) {
+          lidar_point.SetType(LidarPointType::IcpGround);
+          Eigen::Vector3ub color;
+          color << 255,255,0;
+          lidar_point.SetColor(color);
+        } else {
+          lidar_point.SetType(LidarPointType::Icp);
+          Eigen::Vector3ub color;
+          color << 0,0,255;
+          lidar_point.SetColor(color);
+        }
+        ba_config.AddLidarPoint(point3d_id,lidar_point);
+        reconstruction_ -> AddLidarPointInGlobal(point3d_id,lidar_point);
+
+      }
+    }
+  } else {
+    ba_config.SetConstantPose(reg_image_ids[0]);
+    ba_config.SetConstantTvec(reg_image_ids[1], {0});
+  }
 
   // Run bundle adjustment.
   BundleAdjuster bundle_adjuster(ba_options, ba_config);
+  const BundleAdjuster::OptimazePhrase phrase = BundleAdjuster::OptimazePhrase::WholeMap;
+  bundle_adjuster.SetOptimazePhrase(phrase);
+
   bundle_adjuster.Solve(reconstruction_);
 
   GetTimer().PrintMinutes();
+}
+
+void BundleAdjustmentController::LoadPointcloud(std::string& pointcloud_path, 
+                                       const lidar::PcdProjectionOptions& pp_options){
+  lidar_pointcloud_process_.reset(new lidar::PointCloudProcess(pointcloud_path));
+  if (!lidar_pointcloud_process_->Initialize(pp_options)){
+    std::cout<< "Point cloud initialize has error"<<std::endl;
+  }
+}
+
+void BundleAdjustmentController::ClearLidarPoints(){
+  reconstruction_->ClearLidarPoints();
+  reconstruction_->ClearLidarPointsInGlobal();
 }
 
 }  // namespace colmap

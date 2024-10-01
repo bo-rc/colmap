@@ -32,6 +32,8 @@
     <file>media/reconstruction-stats.png</file>
     <file>media/bundle-adjustment.png</file>
     <file>media/dense-reconstruction.png</file>
+    <file>media/lidar.png</file>
+    <file>media/pose.png</file>
     <file>media/render-enabled.png</file>
     <file>media/render-disabled.png</file>
     <file>media/render-reset-view.png</file>

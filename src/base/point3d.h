@@ -75,9 +75,22 @@ class Point3D {
   inline class Track& Track();
   inline void SetTrack(class Track track);
 
+  // The corresponding lidar point coordinate in world space.
+  inline void SetLidarXYZ(const Eigen::Vector3d &lidar_xyz);
+  inline Eigen::Vector3d LidarXYZ() const;
+
+  inline void AddGlobalOptNum();
+  inline const int GlobalOptNum();
+
+  inline const bool IfInSphere() const;
+  inline bool& IfInSphere();
+
  private:
   // The 3D position of the point.
   Eigen::Vector3d xyz_;
+
+  // The corresponding lidar point position
+  Eigen::Vector3d lidar_xyz_;
 
   // The color of the point in the range [0, 255].
   Eigen::Vector3ub color_;
@@ -87,6 +100,10 @@ class Point3D {
 
   // The track of the point as a list of image observations.
   class Track track_;
+
+  int global_opt_num_ = 0;
+
+  bool if_in_sphere_ = false;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -132,6 +149,23 @@ class Track& Point3D::Track() {
 }
 
 void Point3D::SetTrack(class Track track) { track_ = std::move(track); }
+
+void Point3D::SetLidarXYZ(const Eigen::Vector3d &lidar_xyz){ lidar_xyz_ = lidar_xyz;}
+Eigen::Vector3d Point3D::LidarXYZ() const{ return lidar_xyz_;}
+
+void Point3D::AddGlobalOptNum(){
+  global_opt_num_ +=1;
+}
+
+const int Point3D::GlobalOptNum(){
+  return global_opt_num_;
+}
+const bool Point3D::IfInSphere() const {
+  return if_in_sphere_;
+}
+bool& Point3D::IfInSphere(){
+  return if_in_sphere_;
+}
 
 }  // namespace colmap
 

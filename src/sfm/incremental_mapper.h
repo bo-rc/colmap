@@ -38,6 +38,8 @@
 #include "optim/bundle_adjustment.h"
 #include "sfm/incremental_triangulator.h"
 #include "util/alignment.h"
+#include "lidar/ply.h"
+#include "lidar/pcd_projection.h"
 
 namespace colmap {
 
@@ -64,9 +66,27 @@ namespace colmap {
 class IncrementalMapper {
  public:
   struct Options {
+    int first_image_fixed_frames = 1;
+    int min_proj_num = 1;
+    double kdtree_max_search_range;
+    double kdtree_min_search_range;
+    double search_range_drop_speed;
+    double ba_spherical_search_radius;
+    int ba_match_features_threshold;
     // Minimum number of inliers for initial image pair.
     int init_min_num_inliers = 100;
 
+    // The image identifiers used to initialize the reconstruction. Note that
+    // only one or both image identifiers can be specified. In the former case,
+    // the second image is automatically determined.
+    int init_image_id1 = 1;
+    int init_image_id2 = -1;
+    double init_image_x;
+    double init_image_y;
+    double init_image_z;
+    double init_image_roll;
+    double init_image_pitch;
+    double init_image_yaw;
     // Maximum error in pixels for two-view geometry estimation for initial
     // image pair.
     double init_max_error = 4.0;
@@ -81,7 +101,7 @@ class IncrementalMapper {
     int init_max_reg_trials = 2;
 
     // Maximum reprojection error in absolute pose estimation.
-    double abs_pose_max_error = 12.0;
+    double abs_pose_max_error = 24.0;
 
     // Minimum number of inliers in absolute pose estimation.
     int abs_pose_min_num_inliers = 30;
@@ -108,8 +128,9 @@ class IncrementalMapper {
     double max_extra_param = 1;
 
     // Maximum reprojection error in pixels for observations.
-    double filter_max_reproj_error = 4.0;
-
+    double filter_max_reproj_error = 8.0;
+    double proj_max_dist_error = 10;
+    double icp_max_dist_error = 1.5;
     // Minimum triangulation angle in degrees for stable 3D points.
     double filter_min_tri_angle = 1.5;
 
@@ -145,6 +166,9 @@ class IncrementalMapper {
   // life-time of the incremental mapper.
   explicit IncrementalMapper(const DatabaseCache* database_cache);
 
+  // Load existed initial pose guess
+  void LoadExistedImagePoses(std::map<uint32_t, std::vector<double>>& poses);
+
   // Prepare the mapper for a new reconstruction, which might have existing
   // registered images (in which case `RegisterNextImage` must be called) or
   // which is empty (in which case `RegisterInitialImagePair` must be called).
@@ -169,6 +193,11 @@ class IncrementalMapper {
   // Attempt to seed the reconstruction from an image pair.
   bool RegisterInitialImagePair(const Options& options, const image_t image_id1,
                                 const image_t image_id2);
+                                
+  // Attempt to seed tne reconstruction from an image pair and lidar pointcloud.
+  bool RegisterInitialImagePairByDepthProj(const Options& options,
+                                                            const image_t image_id1,
+                                                            const image_t image_id2);
 
   // Attempt to register image to the existing model. This requires that
   // a previous call to `RegisterInitialImagePair` was successful.
@@ -202,12 +231,15 @@ class IncrementalMapper {
   // connected to the reference image, their observing images are set as
   // constant in the adjustment.
   LocalBundleAdjustmentReport AdjustLocalBundle(
-      const Options& options, const BundleAdjustmentOptions& ba_options,
+      const Options& options, 
+      const BundleAdjustmentOptions& ba_options,
       const IncrementalTriangulator::Options& tri_options,
       const image_t image_id, const std::unordered_set<point3D_t>& point3D_ids);
 
   // Global bundle adjustment using Ceres Solver or PBA.
   bool AdjustGlobalBundle(const Options& options,
+                          const BundleAdjustmentOptions& ba_options);
+  bool AdjustGlobalBundleByLidar(const Options& options,
                           const BundleAdjustmentOptions& ba_options);
   bool AdjustParallelGlobalBundle(
       const BundleAdjustmentOptions& ba_options,
@@ -231,6 +263,9 @@ class IncrementalMapper {
 
   // Clear the collection of changed 3D points.
   void ClearModifiedPoints3D();
+  void ClearLidarPoints();
+  void LoadPointcloud(std::string& pointcloud_path, 
+                      const lidar::PcdProjectionOptions& pp_options);
 
  private:
   // Find seed images for incremental reconstruction. Suitable seed images have
@@ -306,6 +341,10 @@ class IncrementalMapper {
   // This image list will be non-empty, if the reconstruction is continued from
   // an existing reconstruction.
   std::unordered_set<image_t> existing_image_ids_;
+
+  std::shared_ptr<lidar::PointCloudProcess> lidar_pointcloud_process_;
+  bool if_import_pose_prior_ = false;// if initial image pose guess exist
+  std::map<uint32_t, std::vector<double>> existed_poses_;// existed initial image pose guess
 };
 
 }  // namespace colmap

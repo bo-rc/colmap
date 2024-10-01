@@ -461,6 +461,12 @@ void OptionManager::AddBundleAdjustmentOptions() {
   AddAndRegisterDefaultOption(
       "BundleAdjustment.parameter_tolerance",
       &bundle_adjustment->solver_options.parameter_tolerance);
+  AddAndRegisterDefaultOption("BundleAdjustment.if_add_lidar_constraint",
+                              &bundle_adjustment->if_add_lidar_constraint);
+  AddAndRegisterDefaultOption("BundleAdjustment.icp_nonground_lidar_constraint_weight",
+                              &bundle_adjustment->icp_lidar_constraint_weight); 
+  AddAndRegisterDefaultOption("BundleAdjustment.icp_ground_lidar_constraint_weight",
+                              &bundle_adjustment->icp_ground_lidar_constraint_weight); 
   AddAndRegisterDefaultOption("BundleAdjustment.refine_focal_length",
                               &bundle_adjustment->refine_focal_length);
   AddAndRegisterDefaultOption("BundleAdjustment.refine_principal_point",
@@ -477,6 +483,67 @@ void OptionManager::AddMapperOptions() {
   }
   added_mapper_options_ = true;
 
+  AddAndRegisterDefaultOption("Mapper.first_image_fixed_frames",
+                              &mapper->first_image_fixed_frames);
+  AddAndRegisterDefaultOption("Mapper.if_add_lidar_constraint",
+                              &mapper->if_add_lidar_constraint);
+  AddAndRegisterDefaultOption("Mapper.lidar_pointcloud_path",
+                              &mapper->lidar_pointcloud_path);  
+  AddAndRegisterDefaultOption("Mapper.if_import_pose_prior",
+                              &mapper->if_import_pose_prior);  
+  AddAndRegisterDefaultOption("Mapper.image_pose_prior_path",
+                              &mapper->image_pose_prior_path);
+  AddAndRegisterDefaultOption("Mapper.image_pose_save_folder",
+                              &mapper->image_pose_save_folder);
+  AddAndRegisterDefaultOption("Mapper.if_add_lidar_corresponding",
+                              &mapper->if_add_lidar_corresponding);                              
+  AddAndRegisterDefaultOption("Mapper.if_add_lidar_display",
+                              &mapper->if_add_lidar_display);    
+  AddAndRegisterDefaultOption("Mapper.proj_lidar_constraint_weight",
+                              &mapper->proj_lidar_constraint_weight);  
+  AddAndRegisterDefaultOption("Mapper.icp_lidar_constraint_weight",
+                              &mapper->icp_lidar_constraint_weight); 
+  AddAndRegisterDefaultOption("Mapper.icp_ground_lidar_constraint_weight",
+                              &mapper->icp_ground_lidar_constraint_weight); 
+  AddAndRegisterDefaultOption("Mapper.min_proj_num",
+                              &mapper->min_proj_num);                          
+  AddAndRegisterDefaultOption("Mapper.depth_image_scale",
+                              &mapper->depth_image_scale);  
+  AddAndRegisterDefaultOption("Mapper.if_save_depth_image",
+                              &mapper->if_save_depth_image); 
+  AddAndRegisterDefaultOption("Mapper.depth_image_folder",
+                              &mapper->depth_image_folder);
+  AddAndRegisterDefaultOption("Mapper.if_save_lidar_frame",
+                              &mapper->if_save_lidar_frame);
+  AddAndRegisterDefaultOption("Mapper.lidar_frame_folder",
+                              &mapper->lidar_frame_folder); 
+
+  AddAndRegisterDefaultOption("Mapper.submap_length",
+                              &mapper->submap_length);   
+  AddAndRegisterDefaultOption("Mapper.submap_width",
+                              &mapper->submap_width); 
+  AddAndRegisterDefaultOption("Mapper.submap_height",
+                              &mapper->submap_height); 
+  AddAndRegisterDefaultOption("Mapper.choose_meter",
+                              &mapper->choose_meter);
+  AddAndRegisterDefaultOption("Mapper.max_proj_scale",
+                              &mapper->max_proj_scale);
+  AddAndRegisterDefaultOption("Mapper.min_proj_scale",
+                              &mapper->min_proj_scale);
+  AddAndRegisterDefaultOption("Mapper.min_proj_dist",
+                              &mapper->min_proj_dist);
+  AddAndRegisterDefaultOption("Mapper.min_lidar_proj_dist",
+                              &mapper->min_lidar_proj_dist); 
+  AddAndRegisterDefaultOption("Mapper.kdtree_max_search_range",
+                              &mapper->kdtree_max_search_range);     
+  AddAndRegisterDefaultOption("Mapper.kdtree_min_search_range",
+                              &mapper->kdtree_min_search_range); 
+  AddAndRegisterDefaultOption("Mapper.search_range_drop_speed",
+                              &mapper->search_range_drop_speed); 
+  AddAndRegisterDefaultOption("Mapper.ba_spherical_search_radius",
+                              &mapper->ba_spherical_search_radius); 
+  AddAndRegisterDefaultOption("Mapper.ba_match_features_threshold",
+                              &mapper->ba_match_features_threshold); 
   AddAndRegisterDefaultOption("Mapper.min_num_matches",
                               &mapper->min_num_matches);
   AddAndRegisterDefaultOption("Mapper.ignore_watermarks",
@@ -549,6 +616,18 @@ void OptionManager::AddMapperOptions() {
                               &mapper->mapper.init_min_num_inliers);
   AddAndRegisterDefaultOption("Mapper.init_max_error",
                               &mapper->mapper.init_max_error);
+  AddAndRegisterDefaultOption("Mapper.init_image_x",
+                              &mapper->init_image_x);
+  AddAndRegisterDefaultOption("Mapper.init_image_y",
+                              &mapper->init_image_y);
+  AddAndRegisterDefaultOption("Mapper.init_image_z",
+                              &mapper->init_image_z);
+  AddAndRegisterDefaultOption("Mapper.init_image_roll",
+                              &mapper->init_image_roll);
+  AddAndRegisterDefaultOption("Mapper.init_image_pitch",
+                              &mapper->init_image_pitch);
+  AddAndRegisterDefaultOption("Mapper.init_image_yaw",
+                              &mapper->init_image_yaw);
   AddAndRegisterDefaultOption("Mapper.init_max_forward_motion",
                               &mapper->mapper.init_max_forward_motion);
   AddAndRegisterDefaultOption("Mapper.init_min_tri_angle",
@@ -565,6 +644,10 @@ void OptionManager::AddMapperOptions() {
                               &mapper->mapper.filter_max_reproj_error);
   AddAndRegisterDefaultOption("Mapper.filter_min_tri_angle",
                               &mapper->mapper.filter_min_tri_angle);
+  AddAndRegisterDefaultOption("Mapper.proj_max_dist_error",
+                              &mapper->mapper.proj_max_dist_error);
+  AddAndRegisterDefaultOption("Mapper.icp_max_dist_error",
+                              &mapper->mapper.icp_max_dist_error);                            
   AddAndRegisterDefaultOption("Mapper.max_reg_trials",
                               &mapper->mapper.max_reg_trials);
   AddAndRegisterDefaultOption("Mapper.local_ba_min_tri_angle",

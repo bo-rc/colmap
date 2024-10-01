@@ -104,6 +104,11 @@ IncrementalMapper::IncrementalMapper(const DatabaseCache* database_cache)
       num_shared_reg_images_(0),
       prev_init_image_pair_id_(kInvalidImagePairId) {}
 
+void IncrementalMapper::LoadExistedImagePoses(std::map<uint32_t, std::vector<double>>& poses){
+  existed_poses_ = poses;
+  if_import_pose_prior_ = true;
+}
+
 void IncrementalMapper::BeginReconstruction(Reconstruction* reconstruction) {
   CHECK(reconstruction_ == nullptr);
   reconstruction_ = reconstruction;
@@ -142,7 +147,19 @@ void IncrementalMapper::EndReconstruction(const bool discard) {
   reconstruction_ = nullptr;
   triangulator_.reset();
 }
+void IncrementalMapper::LoadPointcloud(std::string& pointcloud_path, 
+                                       const lidar::PcdProjectionOptions& pp_options){
+  if (pointcloud_path == ""){
+    std::cout << "Pose file path undefined." << std::endl;
+    std::cout << std::endl;
+  }                                    
+  lidar_pointcloud_process_.reset(new lidar::PointCloudProcess(pointcloud_path));
+  if (!lidar_pointcloud_process_->Initialize(pp_options)){
+    std::cout<< "Error reading point cloud." << std::endl;
+    std::cout << std::endl;
 
+  }
+}
 bool IncrementalMapper::FindInitialImagePair(const Options& options,
                                              image_t* image_id1,
                                              image_t* image_id2) {
@@ -285,9 +302,9 @@ bool IncrementalMapper::RegisterInitialImagePair(const Options& options,
   if (!EstimateInitialTwoViewGeometry(options, image_id1, image_id2)) {
     return false;
   }
-
   image1.Qvec() = ComposeIdentityQuaternion();
   image1.Tvec() = Eigen::Vector3d(0, 0, 0);
+
   image2.Qvec() = prev_init_two_view_geometry_.qvec;
   image2.Tvec() = prev_init_two_view_geometry_.tvec;
 
@@ -340,6 +357,168 @@ bool IncrementalMapper::RegisterInitialImagePair(const Options& options,
 
   return true;
 }
+bool IncrementalMapper::RegisterInitialImagePairByDepthProj(const Options& options,
+                                                            const image_t image_id1,
+                                                            const image_t image_id2){
+  CHECK_NOTNULL(reconstruction_);
+  CHECK_EQ(reconstruction_->NumRegImages(), 0);
+
+  CHECK(options.Check());
+
+  init_num_reg_trials_[image_id1] += 1;
+  init_num_reg_trials_[image_id2] += 1;
+  num_reg_trials_[image_id1] += 1;
+  num_reg_trials_[image_id2] += 1;
+
+  const image_pair_t pair_id =
+      Database::ImagePairToPairId(image_id1, image_id2);
+  init_image_pairs_.insert(pair_id);
+
+  Image& image1 = reconstruction_->Image(image_id1);
+  Camera& camera1 = reconstruction_->Camera(image1.CameraId());
+
+  Image& image2 = reconstruction_->Image(image_id2);
+  Camera& camera2 = reconstruction_->Camera(image2.CameraId());
+
+  // Give initial pose to the first image
+  double roll = DegToRad(options.init_image_roll);
+  double pitch = -DegToRad(options.init_image_pitch);
+  double yaw = -DegToRad(options.init_image_yaw);
+  //Eigen::Vector3d eulerAngle(roll, pitch, yaw);
+  Eigen::AngleAxisd rollAngle(Eigen::AngleAxisd(roll,Eigen::Vector3d::UnitZ()));
+  Eigen::AngleAxisd pitchAngle(Eigen::AngleAxisd(pitch,Eigen::Vector3d::UnitX()));
+  Eigen::AngleAxisd yawAngle(Eigen::AngleAxisd(yaw,Eigen::Vector3d::UnitY()));
+ 
+  Eigen::Matrix3d rotation_matrix;
+  rotation_matrix = yawAngle * pitchAngle * rollAngle;
+
+  Eigen::Vector3d t_init(-options.init_image_y, -options.init_image_z, options.init_image_x);
+
+  Eigen::Matrix3d R_wc = rotation_matrix;
+  Eigen::Vector3d t_wc = t_init;
+  Eigen::Matrix3d R_cw = R_wc.transpose();
+  Eigen::Vector3d t_cw = - R_cw * t_wc;
+  Eigen::Quaterniond q_cw(R_cw);
+  Eigen::Vector4d q_cw_v;
+  q_cw_v << q_cw.w(),q_cw.x(),q_cw.y(),q_cw.z();
+
+  image1.Qvec() = q_cw_v;
+  image1.Tvec() = t_cw;
+
+  if (if_import_pose_prior_) {
+    auto iter = existed_poses_.find(image1.ImageId());
+    if (iter != existed_poses_.end()){
+      std::vector<double> pose1 = iter->second;
+      Eigen::Vector4d q_cw1;
+      Eigen::Vector3d t_cw1;
+      t_cw1 << pose1[0], pose1[1], pose1[2];
+      q_cw1 << pose1[3], pose1[4], pose1[5], pose1[6];
+      image1.SetQvec(q_cw1);
+      image1.SetTvec(t_cw1);
+    }
+    iter = existed_poses_.find(image2.ImageId());
+    if (iter != existed_poses_.end()){
+      std::vector<double> pose2 = iter->second;
+      Eigen::Vector4d q_cw2;
+      Eigen::Vector3d t_cw2;
+      t_cw2 << pose2[0], pose2[1], pose2[2];
+      q_cw2 << pose2[3], pose2[4], pose2[5], pose2[6];
+      image2.SetQvec(q_cw2);
+      image2.SetTvec(t_cw2);
+    }
+
+  }
+  // image1.Qvec() = ComposeIdentityQuaternion();
+  // image1.Tvec() = Eigen::Vector3d(0, 0, 0);
+
+  const CorrespondenceGraph& correspondence_graph =
+      database_cache_->CorrespondenceGraph();
+  const FeatureMatches matches =
+      correspondence_graph.FindCorrespondencesBetweenImages(image_id1,
+                                                            image_id2);
+  std::vector<std::pair<Eigen::Vector2d, bool>,Eigen::aligned_allocator<std::pair<Eigen::Vector2d, bool>>> image1_point2ds;
+  std::vector<Eigen::Vector2d,Eigen::aligned_allocator<Eigen::Vector2d>> image2_point2ds;
+  std::vector<Eigen::Vector3d,Eigen::aligned_allocator<Eigen::Vector3d>> image1_pt_xyzs;
+  image1_point2ds.reserve(matches.size());
+  image1_pt_xyzs.reserve(matches.size());
+  for (const auto match : matches){
+    const Point2D point2D_1 = image1.Point2D(match.point2D_idx1);
+    image1_point2ds.push_back({point2D_1.XY(),false});
+    const Point2D point2D_2 = image2.Point2D(match.point2D_idx2);
+    image2_point2ds.push_back(point2D_2.XY());
+  }
+  
+  lidar_pointcloud_process_->pcd_proj_->SetNewImage(image1,camera1,image1_point2ds,image1_pt_xyzs);
+  std::vector<Eigen::Vector2d> tri_points2D; 
+  std::vector<Eigen::Vector3d> tri_points3D; 
+  std::vector<point2D_t> image1_idxs;
+  std::vector<point2D_t> image2_idxs;
+  for (int i = 0; i < image1_point2ds.size(); i++){
+    if (image1_point2ds[i].second == false) continue;
+
+    tri_points2D.push_back(image2_point2ds[i]);
+    tri_points3D.push_back(image1_pt_xyzs[i]);
+    image1_idxs.push_back(matches[i].point2D_idx1);
+    image2_idxs.push_back(matches[i].point2D_idx2);
+  }
+
+  AbsolutePoseEstimationOptions abs_pose_options;
+  abs_pose_options.num_threads = options.num_threads;
+  abs_pose_options.num_focal_length_samples = 30;
+  abs_pose_options.min_focal_length_ratio = options.min_focal_length_ratio;
+  abs_pose_options.max_focal_length_ratio = options.max_focal_length_ratio;
+  abs_pose_options.ransac_options.max_error = options.abs_pose_max_error;
+  abs_pose_options.ransac_options.min_inlier_ratio =
+      options.abs_pose_min_inlier_ratio;
+  // Use high confidence to avoid preemptive termination of P3P RANSAC
+  // - too early termination may lead to bad registration.
+  abs_pose_options.ransac_options.min_num_trials = 100;
+  abs_pose_options.ransac_options.max_num_trials = 10000;
+  abs_pose_options.ransac_options.confidence = 0.99999;
+  abs_pose_options.estimate_focal_length = false;
+  AbsolutePoseRefinementOptions abs_pose_refinement_options;
+  abs_pose_refinement_options.refine_focal_length = false;
+  abs_pose_refinement_options.refine_extra_params = false;
+
+  size_t num_inliers;
+  std::vector<char> inlier_mask;
+  if (!EstimateAbsolutePose(abs_pose_options, tri_points2D, tri_points3D,
+                            &image2.Qvec(), &image2.Tvec(), &camera2, &num_inliers,
+                            &inlier_mask)) {
+    return false;
+  }
+
+  if (num_inliers < static_cast<size_t>(options.abs_pose_min_num_inliers)) {
+    return false;
+  }
+
+  if (!RefineAbsolutePose(abs_pose_refinement_options, inlier_mask,
+                          tri_points2D, tri_points3D, &image2.Qvec(),
+                          &image2.Tvec(), &camera2)) {
+    return false;
+  }
+
+  reconstruction_->RegisterImage(image_id1);
+  reconstruction_->RegisterImage(image_id2);
+  RegisterImageEvent(image_id1);
+  RegisterImageEvent(image_id2);
+  Track track;
+  track.Reserve(2);
+  track.AddElement(TrackElement());
+  track.AddElement(TrackElement());
+  track.Element(0).image_id = image_id1;
+  track.Element(1).image_id = image_id2;
+  for (size_t i = 0; i < inlier_mask.size(); ++i) {
+    if (inlier_mask[i]) {
+      track.Element(0).point2D_idx = image1_idxs[i];
+      track.Element(1).point2D_idx = image2_idxs[i];
+      const Eigen::Vector3d xyz = tri_points3D[i];
+      reconstruction_->AddPoint3D(xyz, track);
+    }
+  }
+
+  return true;
+}
 
 bool IncrementalMapper::RegisterNextImage(const Options& options,
                                           const image_t image_id) {
@@ -361,10 +540,25 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
     return false;
   }
 
+    if (if_import_pose_prior_) {
+      auto iter = existed_poses_.find(image_id);
+      if (iter != existed_poses_.end()){
+        std::vector<double> pose = iter -> second;
+        Eigen::Vector4d q_cw;
+        Eigen::Vector3d t_cw;
+        t_cw << pose[0], pose[1], pose[2];
+        q_cw << pose[3], pose[4], pose[5], pose[6];
+        image.SetQvec(q_cw);
+        image.SetTvec(t_cw);
+      }
+
+  }
+
   //////////////////////////////////////////////////////////////////////////////
   // Search for 2D-3D correspondences
   //////////////////////////////////////////////////////////////////////////////
 
+  
   const CorrespondenceGraph& correspondence_graph =
       database_cache_->CorrespondenceGraph();
 
@@ -381,10 +575,10 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
     for (const auto& corr :
          correspondence_graph.FindCorrespondences(image_id, point2D_idx)) {
       const Image& corr_image = reconstruction_->Image(corr.image_id);
+      // If this image hasn't been registered, ignore this image
       if (!corr_image.IsRegistered()) {
         continue;
       }
-
       const Point2D& corr_point2D = corr_image.Point2D(corr.point2D_idx);
       if (!corr_point2D.HasPoint3D()) {
         continue;
@@ -394,7 +588,6 @@ bool IncrementalMapper::RegisterNextImage(const Options& options,
       if (corr_point3D_ids.count(corr_point2D.Point3DId()) > 0) {
         continue;
       }
-
       const Camera& corr_camera =
           reconstruction_->Camera(corr_image.CameraId());
 
@@ -553,9 +746,11 @@ size_t IncrementalMapper::MergeTracks(
   return triangulator_->MergeAllTracks(tri_options);
 }
 
+// incremental mapping optimization func
 IncrementalMapper::LocalBundleAdjustmentReport
 IncrementalMapper::AdjustLocalBundle(
-    const Options& options, const BundleAdjustmentOptions& ba_options,
+    const Options& options, 
+    const BundleAdjustmentOptions& ba_options,
     const IncrementalTriangulator::Options& tri_options, const image_t image_id,
     const std::unordered_set<point3D_t>& point3D_ids) {
   CHECK_NOTNULL(reconstruction_);
@@ -566,13 +761,32 @@ IncrementalMapper::AdjustLocalBundle(
   // Find images that have most 3D points with given image in common.
   const std::vector<image_t> local_bundle = FindLocalBundle(options, image_id);
 
+  std::cout<<std::endl;
   // Do the bundle adjustment only if there is any connected images.
   if (local_bundle.size() > 0) {
     BundleAdjustmentConfig ba_config;
+    if (ba_options.if_add_lidar_constraint || ba_options.if_add_lidar_corresponding){
+      ba_config.AddPointcloud(lidar_pointcloud_process_);
+    }
+
     ba_config.AddImage(image_id);
+
+    bool if_first_image_exist = false;
+
     for (const image_t local_image_id : local_bundle) {
+      if (local_image_id == options.init_image_id1){
+          if_first_image_exist = true;
+      }
       ba_config.AddImage(local_image_id);
     }
+    // for (const image_t local_image_id : local_bundle) {
+    //   ba_config.AddImage(local_image_id);
+    // }
+    if (ba_options.if_add_lidar_constraint && 
+        if_first_image_exist && 
+        reconstruction_->NumRegImages() < options.first_image_fixed_frames){
+      ba_config.SetConstantPose(options.init_image_id1);
+    } 
 
     // Fix the existing images, if option specified.
     if (options.fix_existing_images) {
@@ -600,16 +814,18 @@ IncrementalMapper::AdjustLocalBundle(
     }
 
     // Fix 7 DOF to avoid scale/rotation/translation drift in bundle adjustment.
-    if (local_bundle.size() == 1) {
-      ba_config.SetConstantPose(local_bundle[0]);
-      ba_config.SetConstantTvec(image_id, {0});
-    } else if (local_bundle.size() > 1) {
-      const image_t image_id1 = local_bundle[local_bundle.size() - 1];
-      const image_t image_id2 = local_bundle[local_bundle.size() - 2];
-      ba_config.SetConstantPose(image_id1);
-      if (!options.fix_existing_images ||
-          !existing_image_ids_.count(image_id2)) {
-        ba_config.SetConstantTvec(image_id2, {0});
+    if (!ba_options.if_add_lidar_constraint) {
+      if (local_bundle.size() == 1) {
+        ba_config.SetConstantPose(local_bundle[0]);
+        ba_config.SetConstantTvec(image_id, {0});
+      } else if (local_bundle.size() > 1) {
+        const image_t image_id1 = local_bundle[local_bundle.size() - 1];
+        const image_t image_id2 = local_bundle[local_bundle.size() - 2];
+        ba_config.SetConstantPose(image_id1);
+        if (!options.fix_existing_images || 
+            !existing_image_ids_.count(image_id2)) {
+          ba_config.SetConstantTvec(image_id2, {0});
+        }
       }
     }
 
@@ -619,17 +835,61 @@ IncrementalMapper::AdjustLocalBundle(
     // to them to bundle adjustment and track merging/completion would slow
     // down the local bundle adjustment significantly.
     std::unordered_set<point3D_t> variable_point3D_ids;
-    for (const point3D_t point3D_id : point3D_ids) {
-      const Point3D& point3D = reconstruction_->Point3D(point3D_id);
-      const size_t kMaxTrackLength = 15;
-      if (!point3D.HasError() || point3D.Track().Length() <= kMaxTrackLength) {
-        ba_config.AddVariablePoint(point3D_id);
-        variable_point3D_ids.insert(point3D_id);
+    std::unordered_set<point3D_t> pcdproj_point3D_ids;
+    std::unordered_set<point3D_t> search_closest_point3D_ids;
+    if (ba_options.if_add_lidar_constraint) {
+      for (const point3D_t point3D_id : point3D_ids) {
+        const Point3D& point3D = reconstruction_->Point3D(point3D_id);
+        const size_t kMaxTrackLength = 1000;
+        if (!point3D.HasError() || point3D.Track().Length() <= kMaxTrackLength) {
+          ba_config.AddVariablePoint(point3D_id);
+          variable_point3D_ids.insert(point3D_id);
+          if (point3D.Track().Length() < options.min_proj_num + 3){
+            pcdproj_point3D_ids.insert(point3D_id);
+          } else {
+            search_closest_point3D_ids.insert(point3D_id);
+          }
+        }
+      }
+    } else {
+      for (const point3D_t point3D_id : point3D_ids) {
+        const Point3D& point3D = reconstruction_->Point3D(point3D_id);
+        const size_t kMaxTrackLength = 15;
+        if (!point3D.HasError() || point3D.Track().Length() <= kMaxTrackLength) {
+          ba_config.AddVariablePoint(point3D_id);
+          variable_point3D_ids.insert(point3D_id);
+        }
       }
     }
 
+    if (ba_options.if_add_lidar_constraint || ba_options.if_add_lidar_corresponding){
+      for (auto iter = pcdproj_point3D_ids.begin(); iter != pcdproj_point3D_ids.end(); iter++){
+        const point3D_t point3D_id = *iter;
+        int threshold = ba_options.ba_match_features_threshold;
+        ba_config.Project2Image(reconstruction_,point3D_id, image_id, threshold);
+      }
+      for (auto iter = pcdproj_point3D_ids.begin(); iter != pcdproj_point3D_ids.end(); iter++){
+        const point3D_t point3D_id = *iter;
+        ba_config.MatchVariablePoint2LidarPoint(reconstruction_,point3D_id);
+      }
+
+      for (auto iter = search_closest_point3D_ids.begin(); iter != search_closest_point3D_ids.end(); iter++){
+        const point3D_t point3D_id = *iter;
+        // const Point3D& point3D = reconstruction_->Point3D(point3D_id);
+        int opt_num = reconstruction_->Point3D(point3D_id).GlobalOptNum();
+        double max_search_range = options.kdtree_max_search_range - opt_num * options.search_range_drop_speed;
+        if (max_search_range <= options.kdtree_min_search_range) {
+          max_search_range = options.kdtree_min_search_range;
+        }
+        ba_config.MatchClosestLidarPoint(reconstruction_,point3D_id,max_search_range);
+      }
+    }
+
+    
     // Adjust the local bundle.
     BundleAdjuster bundle_adjuster(ba_options, ba_config);
+    const BundleAdjuster::OptimazePhrase phrase = BundleAdjuster::OptimazePhrase::Local;
+    bundle_adjuster.SetOptimazePhrase(phrase);
     bundle_adjuster.Solve(reconstruction_);
 
     report.num_adjusted_observations =
@@ -655,13 +915,17 @@ IncrementalMapper::AdjustLocalBundle(
   std::unordered_set<image_t> filter_image_ids;
   filter_image_ids.insert(image_id);
   filter_image_ids.insert(local_bundle.begin(), local_bundle.end());
+
   report.num_filtered_observations = reconstruction_->FilterPoints3DInImages(
       options.filter_max_reproj_error, options.filter_min_tri_angle,
       filter_image_ids);
   report.num_filtered_observations += reconstruction_->FilterPoints3D(
       options.filter_max_reproj_error, options.filter_min_tri_angle,
       point3D_ids);
-
+  if (ba_options.if_add_lidar_constraint) {
+    report.num_filtered_observations += reconstruction_->FilterLidarOutlier(
+        options.proj_max_dist_error,options.icp_max_dist_error);
+  }
   return report;
 }
 
@@ -702,6 +966,9 @@ bool IncrementalMapper::AdjustGlobalBundle(
 
   // Run bundle adjustment.
   BundleAdjuster bundle_adjuster(ba_options, ba_config);
+  const BundleAdjuster::OptimazePhrase phrase = BundleAdjuster::OptimazePhrase::Global;
+  bundle_adjuster.SetOptimazePhrase(phrase);
+
   if (!bundle_adjuster.Solve(reconstruction_)) {
     return false;
   }
@@ -709,6 +976,158 @@ bool IncrementalMapper::AdjustGlobalBundle(
   // Normalize scene for numerical stability and
   // to avoid large scale changes in viewer.
   reconstruction_->Normalize();
+
+  return true;
+}
+
+bool IncrementalMapper::AdjustGlobalBundleByLidar(
+    const Options& options, const BundleAdjustmentOptions& ba_options) {
+  CHECK_NOTNULL(reconstruction_);
+
+  const std::vector<image_t>& reg_image_ids = reconstruction_->RegImageIds();
+  EIGEN_STL_UMAP(point3D_t, Point3D) point3d_ids = reconstruction_->Points3D();
+
+  CHECK_GE(reg_image_ids.size(), 2) << "At least two images must be "
+                                       "registered for global "
+                                       "bundle-adjustment";
+
+  // Avoid degeneracies in bundle adjustment.
+  reconstruction_->FilterObservationsWithNegativeDepth();
+
+  // Configure bundle adjustment.
+  BundleAdjustmentConfig ba_config;
+  for (const image_t image_id : reg_image_ids) {
+    ba_config.AddImage(image_id);
+  }
+
+  // Fix the existing images, if option specified.
+  if (options.fix_existing_images) {
+    for (const image_t image_id : reg_image_ids) {
+      if (existing_image_ids_.count(image_id)) {
+        ba_config.SetConstantPose(image_id);
+      }
+    }
+  }
+
+  // Fix 7-DOFs of the bundle adjustment problem.
+  // ba_config.SetConstantPose(reg_image_ids[0]);
+  // if (!options.fix_existing_images ||
+  //     !existing_image_ids_.count(reg_image_ids[1])) {
+  //   ba_config.SetConstantTvec(reg_image_ids[1], {0});
+  // }
+  int num = reg_image_ids.size() - 1 ;
+  if (num < options.first_image_fixed_frames){
+    ba_config.SetConstantPose(options.init_image_id1);
+    num +=1;
+  }
+    
+  // Variables inside the sphere that need to be optimized
+  image_t latest_image_id = reg_image_ids.back();
+  Eigen::Quaterniond latest_q_cw(reconstruction_->Image(latest_image_id).Qvec()[0],
+                            reconstruction_->Image(latest_image_id).Qvec()[1],
+                            reconstruction_->Image(latest_image_id).Qvec()[2],
+                            reconstruction_->Image(latest_image_id).Qvec()[3]);
+  Eigen::Matrix3d latest_rot_cw = latest_q_cw.toRotationMatrix();
+  Eigen::Vector3d latest_t_cw = reconstruction_->Image(latest_image_id).Tvec();
+  Eigen::Vector3d latest_image_T = - latest_rot_cw.transpose() * latest_t_cw;
+  std::vector<image_t> image_in_sphere;
+  std::vector<image_t> image_out_sphere;
+  std::unordered_set<point3D_t> variable_point3D_ids;
+
+  for (const image_t& image_id : reg_image_ids){
+    Eigen::Quaterniond q_cw(reconstruction_->Image(image_id).Qvec()[0],
+                            reconstruction_->Image(image_id).Qvec()[1],
+                            reconstruction_->Image(image_id).Qvec()[2],
+                            reconstruction_->Image(image_id).Qvec()[3]);
+    Eigen::Matrix3d rot_cw = q_cw.toRotationMatrix();
+    Eigen::Vector3d t_cw = reconstruction_->Image(image_id).Tvec();
+    Eigen::Vector3d image_T = - rot_cw.transpose() * t_cw;
+    double dist = (latest_image_T - image_T).norm();
+    if (dist <= options.ba_spherical_search_radius) {
+      image_in_sphere.push_back(image_id);
+    } else {
+      image_out_sphere.push_back(image_id);
+    }
+  }
+
+  for (const image_t image_id : image_out_sphere) {
+    ba_config.SetConstantPose(image_id);
+  }
+
+  for (image_t image_id : image_in_sphere) {
+    std::vector<class Point2D> point2Ds = reconstruction_->Image(image_id).Points2D();
+    for (Point2D& point2D : point2Ds) {
+      if (!point2D.HasPoint3D()) {
+            continue;
+      }
+      point3D_t point3d_id = point2D.GetPoint3DId();
+      auto iter = point3d_ids.find(point3d_id);
+      if (iter != point3d_ids.end()){
+        ba_config.AddVariablePoint(point3d_id);
+        variable_point3D_ids.insert(point3d_id);
+      }
+    }
+  }
+
+  if (ba_options.if_add_lidar_constraint || ba_options.if_add_lidar_corresponding){
+    for (auto iter = variable_point3D_ids.begin(); iter != variable_point3D_ids.end(); iter++){
+      point3D_t point3D_id = *iter;
+      Point3D& point3D = reconstruction_->Point3D(point3D_id);
+      point3D.IfInSphere() = true;
+      // int track_length = point3D.Track().Length();
+      // double max_search_range = options.kdtree_max_search_range - (track_length - 3) * options.search_range_drop_speed;
+      int opt_num = point3D.GlobalOptNum();
+      double max_search_range = options.kdtree_max_search_range - opt_num * options.search_range_drop_speed;
+      if (max_search_range <= options.kdtree_min_search_range) {
+        max_search_range = options.kdtree_min_search_range;
+      }
+      Eigen::Vector3d pt_xyz = point3D.XYZ();
+      Eigen::Vector6d lidar_pt;
+      if (lidar_pointcloud_process_->SearchNearestNeiborByKdtree(pt_xyz,lidar_pt)) {
+        Eigen::Vector3d norm = lidar_pt.block(3,0,3,1);
+        Eigen::Vector3d l_pt = lidar_pt.block(0,0,3,1);
+        double d = 0 - l_pt.dot(norm);
+        Eigen::Vector4d plane;
+        plane << norm(0),norm(1),norm(2),d;
+
+        LidarPoint lidar_point(l_pt,plane);
+        if (std::abs(norm(1)/norm(0))>10 && std::abs(norm(1)/norm(2))>10) {
+          lidar_point.SetType(LidarPointType::IcpGround);
+          Eigen::Vector3ub color;
+          color << 255,255,0;
+          lidar_point.SetColor(color);
+        } else {
+          lidar_point.SetType(LidarPointType::Icp);
+          Eigen::Vector3ub color;
+          color << 0,0,255;
+          lidar_point.SetColor(color);
+        }
+        double dist = lidar_point.ComputePointToPointDist(pt_xyz);
+        if (dist > max_search_range) continue;
+        ba_config.AddLidarPoint(point3D_id,lidar_point);
+        reconstruction_ -> AddLidarPointInGlobal(point3D_id,lidar_point);
+      }
+    }
+  }
+  
+  // Run bundle adjustment.
+  BundleAdjuster bundle_adjuster(ba_options, ba_config);
+  const BundleAdjuster::OptimazePhrase phrase = BundleAdjuster::OptimazePhrase::Global;
+  bundle_adjuster.SetOptimazePhrase(phrase);
+
+  if (!bundle_adjuster.Solve(reconstruction_)) {
+    return false;
+  }
+
+  for (auto iter = variable_point3D_ids.begin(); iter != variable_point3D_ids.end(); iter++) {
+    Point3D& Point3D = reconstruction_ -> Point3D(*iter);
+    Point3D.AddGlobalOptNum();
+    Point3D.IfInSphere() = false;
+  }
+
+  // Normalize scene for numerical stability and
+  // to avoid large scale changes in viewer.
+  // reconstruction_->Normalize();
 
   return true;
 }
@@ -797,7 +1216,10 @@ const std::unordered_set<point3D_t>& IncrementalMapper::GetModifiedPoints3D() {
 void IncrementalMapper::ClearModifiedPoints3D() {
   triangulator_->ClearModifiedPoints3D();
 }
-
+void IncrementalMapper::ClearLidarPoints(){
+  reconstruction_->ClearLidarPoints();
+  reconstruction_->ClearLidarPointsInGlobal();
+}
 std::vector<image_t> IncrementalMapper::FindFirstInitialImage(
     const Options& options) const {
   // Struct to hold meta-data for ranking images.
@@ -1176,9 +1598,10 @@ bool IncrementalMapper::EstimateInitialTwoViewGeometry(
   TwoViewGeometry::Options two_view_geometry_options;
   two_view_geometry_options.ransac_options.min_num_trials = 30;
   two_view_geometry_options.ransac_options.max_error = options.init_max_error;
+  // Estimate E,F,H
   two_view_geometry.EstimateCalibrated(camera1, points1, camera2, points2,
                                        matches, two_view_geometry_options);
-
+  // Estimate relative pose
   if (!two_view_geometry.EstimateRelativePose(camera1, points1, camera2,
                                               points2)) {
     return false;

@@ -63,20 +63,25 @@ void AdjustGlobalBundle(const IncrementalMapperOptions& options,
   }
 
   PrintHeading1("Global bundle adjustment");
-  if (options.ba_global_use_pba && !options.fix_existing_images &&
-      num_reg_images >= kMinNumRegImagesForFastBA &&
-      ParallelBundleAdjuster::IsSupported(custom_ba_options,
-                                          mapper->GetReconstruction())) {
-    mapper->AdjustParallelGlobalBundle(
-        custom_ba_options, options.ParallelGlobalBundleAdjustment());
+  if (options.if_add_lidar_constraint) {
+    mapper->AdjustGlobalBundleByLidar(options.Mapper(), custom_ba_options);  
   } else {
-    mapper->AdjustGlobalBundle(options.Mapper(), custom_ba_options);
+    if (options.ba_global_use_pba && !options.fix_existing_images &&
+        num_reg_images >= kMinNumRegImagesForFastBA &&
+        ParallelBundleAdjuster::IsSupported(custom_ba_options,
+                                            mapper->GetReconstruction())) {
+      mapper->AdjustParallelGlobalBundle(
+          custom_ba_options, options.ParallelGlobalBundleAdjustment());
+    } else {
+      mapper->AdjustGlobalBundle(options.Mapper(), custom_ba_options);
+    }
   }
 }
 
 void IterativeLocalRefinement(const IncrementalMapperOptions& options,
                               const image_t image_id,
                               IncrementalMapper* mapper) {
+  // mapper->ClearLidarPoints();
   auto ba_options = options.LocalBundleAdjustment();
   for (int i = 0; i < options.ba_local_max_refinements; ++i) {
     const auto report = mapper->AdjustLocalBundle(
@@ -105,6 +110,7 @@ void IterativeLocalRefinement(const IncrementalMapperOptions& options,
         BundleAdjustmentOptions::LossFunctionType::TRIVIAL;
   }
   mapper->ClearModifiedPoints3D();
+
 }
 
 void IterativeGlobalRefinement(const IncrementalMapperOptions& options,
@@ -194,6 +200,15 @@ size_t CompleteAndMergeTracks(const IncrementalMapperOptions& options,
 
 IncrementalMapper::Options IncrementalMapperOptions::Mapper() const {
   IncrementalMapper::Options options = mapper;
+  options.first_image_fixed_frames = first_image_fixed_frames;
+  options.min_proj_num = min_proj_num; 
+  options.kdtree_max_search_range = kdtree_max_search_range;
+  options.kdtree_min_search_range = kdtree_min_search_range;
+  options.search_range_drop_speed = search_range_drop_speed;
+  options.ba_spherical_search_radius = ba_spherical_search_radius;
+  options.ba_match_features_threshold = ba_match_features_threshold;
+  options.proj_max_dist_error = proj_max_dist_error;
+  options.icp_max_dist_error = icp_max_dist_error;
   options.abs_pose_refine_focal_length = ba_refine_focal_length;
   options.abs_pose_refine_extra_params = ba_refine_extra_params;
   options.min_focal_length_ratio = min_focal_length_ratio;
@@ -202,6 +217,14 @@ IncrementalMapper::Options IncrementalMapperOptions::Mapper() const {
   options.num_threads = num_threads;
   options.local_ba_num_images = ba_local_num_images;
   options.fix_existing_images = fix_existing_images;
+  options.init_image_id1 = init_image_id1;
+  options.init_image_id2 = init_image_id2;
+  options.init_image_x = init_image_x;
+  options.init_image_y = init_image_y;
+  options.init_image_z = init_image_z;
+  options.init_image_roll = init_image_roll;
+  options.init_image_pitch = init_image_pitch;
+  options.init_image_yaw = init_image_yaw;
   return options;
 }
 
@@ -217,6 +240,17 @@ IncrementalTriangulator::Options IncrementalMapperOptions::Triangulation()
 BundleAdjustmentOptions IncrementalMapperOptions::LocalBundleAdjustment()
     const {
   BundleAdjustmentOptions options;
+  // lidar related params
+  options.if_add_lidar_constraint = if_add_lidar_constraint;
+  options.lidar_pointcloud_path = lidar_pointcloud_path;
+  options.proj_lidar_constraint_weight = proj_lidar_constraint_weight;
+  options.icp_lidar_constraint_weight = icp_lidar_constraint_weight;
+  options.icp_ground_lidar_constraint_weight = icp_ground_lidar_constraint_weight;
+
+  options.if_add_lidar_corresponding = if_add_lidar_corresponding;
+  
+  options.ba_match_features_threshold = ba_match_features_threshold;
+
   options.solver_options.function_tolerance = ba_local_function_tolerance;
   options.solver_options.gradient_tolerance = 10.0;
   options.solver_options.parameter_tolerance = 0.0;
@@ -238,10 +272,31 @@ BundleAdjustmentOptions IncrementalMapperOptions::LocalBundleAdjustment()
       BundleAdjustmentOptions::LossFunctionType::SOFT_L1;
   return options;
 }
+lidar::PcdProjectionOptions IncrementalMapperOptions::PcdProjector() 
+    const {
+  lidar::PcdProjectionOptions options;
+  options.depth_image_scale = depth_image_scale;
+  options.choose_meter = static_cast<float>(choose_meter);
+  options.max_proj_scale = max_proj_scale;
+  options.min_proj_scale = min_proj_scale;
+  options.min_proj_dist = min_proj_dist;
+  options.min_lidar_proj_dist = min_lidar_proj_dist;
+  options.if_save_depth_image = if_save_depth_image;
+  options.original_image_folder = original_image_folder;
+  options.depth_image_folder = depth_image_folder;
+  options.if_save_lidar_frame = if_save_lidar_frame;
+  options.lidar_frame_folder = lidar_frame_folder;
+  options.submap_length = static_cast<float>(submap_length);//submap尺寸
+  options.submap_width = static_cast<float>(submap_width);
+  options.submap_height = static_cast<float>(submap_height);
+
+  return options;
+}
 
 BundleAdjustmentOptions IncrementalMapperOptions::GlobalBundleAdjustment()
     const {
   BundleAdjustmentOptions options;
+  options.if_add_lidar_constraint = if_add_lidar_constraint;
   options.solver_options.function_tolerance = ba_global_function_tolerance;
   options.solver_options.gradient_tolerance = 1.0;
   options.solver_options.parameter_tolerance = 0.0;
@@ -262,6 +317,7 @@ BundleAdjustmentOptions IncrementalMapperOptions::GlobalBundleAdjustment()
       BundleAdjustmentOptions::LossFunctionType::TRIVIAL;
   return options;
 }
+
 
 ParallelBundleAdjuster::Options
 IncrementalMapperOptions::ParallelGlobalBundleAdjustment() const {
@@ -302,13 +358,14 @@ bool IncrementalMapperOptions::Check() const {
 }
 
 IncrementalMapperController::IncrementalMapperController(
-    const IncrementalMapperOptions* options, const std::string& image_path,
-    const std::string& database_path,
+    IncrementalMapperOptions* options, const std::string& image_path,
+    const std::string& database_path, 
     ReconstructionManager* reconstruction_manager)
     : options_(options),
       image_path_(image_path),
       database_path_(database_path),
       reconstruction_manager_(reconstruction_manager) {
+  options ->original_image_folder = image_path; 
   CHECK(options_->Check());
   RegisterCallback(INITIAL_IMAGE_PAIR_REG_CALLBACK);
   RegisterCallback(NEXT_IMAGE_REG_CALLBACK);
@@ -316,11 +373,19 @@ IncrementalMapperController::IncrementalMapperController(
 }
 
 void IncrementalMapperController::Run() {
+
   if (!LoadDatabase()) {
     return;
   }
 
+  if (options_->if_import_pose_prior) {
+    if (!LoadPose()) {
+      return;
+    }
+  }
+
   IncrementalMapper::Options init_mapper_options = options_->Mapper();
+
   Reconstruct(init_mapper_options);
 
   const size_t kNumInitRelaxations = 2;
@@ -342,12 +407,10 @@ void IncrementalMapperController::Run() {
     Reconstruct(init_mapper_options);
   }
 
-  std::cout << std::endl;
   GetTimer().PrintMinutes();
 }
 
 bool IncrementalMapperController::LoadDatabase() {
-  PrintHeading1("Loading database");
 
   // Make sure images of the given reconstruction are also included when
   // manually specifying images for the reconstrunstruction procedure.
@@ -359,11 +422,13 @@ bool IncrementalMapperController::LoadDatabase() {
       image_names.insert(image.Name());
     }
   }
-
   Database database(database_path_);
   Timer timer;
   timer.Start();
+
   const size_t min_num_matches = static_cast<size_t>(options_->min_num_matches);
+  // database_cache_: A class that caches the contents of the database in memory, 
+  // used to quickly create new reconstruction instances when multiple models are reconstructed.
   database_cache_.Load(database, min_num_matches, options_->ignore_watermarks,
                        image_names);
   std::cout << std::endl;
@@ -381,6 +446,12 @@ bool IncrementalMapperController::LoadDatabase() {
   return true;
 }
 
+int IncrementalMapperController::OriginImagesNum() {
+  Database database(database_path_);
+  int num = database.ReadAllImages().size();
+  return num;
+}
+
 void IncrementalMapperController::Reconstruct(
     const IncrementalMapper::Options& init_mapper_options) {
   const bool kDiscardReconstruction = true;
@@ -390,6 +461,14 @@ void IncrementalMapperController::Reconstruct(
   //////////////////////////////////////////////////////////////////////////////
 
   IncrementalMapper mapper(&database_cache_);
+  if (options_->if_import_pose_prior) {
+    mapper.LoadExistedImagePoses(image_poses_);
+  }
+
+  if (options_->if_add_lidar_constraint || options_->if_add_lidar_corresponding){
+    std::string path = options_->lidar_pointcloud_path;
+    mapper.LoadPointcloud(path, options_->PcdProjector());
+  }
 
   // Is there a sub-model before we start the reconstruction? I.e. the user
   // has imported an existing reconstruction.
@@ -411,10 +490,8 @@ void IncrementalMapperController::Reconstruct(
     } else {
       reconstruction_idx = 0;
     }
-
     Reconstruction& reconstruction =
         reconstruction_manager_->Get(reconstruction_idx);
-
     mapper.BeginReconstruction(&reconstruction);
 
     ////////////////////////////////////////////////////////////////////////////
@@ -448,11 +525,19 @@ void IncrementalMapperController::Reconstruct(
           return;
         }
       }
-
       PrintHeading1(StringPrintf("Initializing with image pair #%d and #%d",
                                  image_id1, image_id2));
-      const bool reg_init_success = mapper.RegisterInitialImagePair(
+      // input: IncrementalMapper::Options init_mapper_options
+      // input: initial image pair
+      bool reg_init_success;
+      if (options_->if_add_lidar_constraint){
+        reg_init_success = mapper.RegisterInitialImagePairByDepthProj(
           init_mapper_options, image_id1, image_id2);
+      } else {
+        reg_init_success = mapper.RegisterInitialImagePair(
+            init_mapper_options, image_id1, image_id2);
+      } 
+          
       if (!reg_init_success) {
         std::cout << "  => Initialization failed - possible solutions:"
                   << std::endl
@@ -466,9 +551,10 @@ void IncrementalMapperController::Reconstruct(
       }
 
       AdjustGlobalBundle(*options_, &mapper);
+
       FilterPoints(*options_, &mapper);
       FilterImages(*options_, &mapper);
-
+ 
       // Initial image pair failed to register.
       if (reconstruction.NumRegImages() == 0 ||
           reconstruction.NumPoints3D() == 0) {
@@ -487,7 +573,8 @@ void IncrementalMapperController::Reconstruct(
         ExtractColors(image_path_, image_id1, &reconstruction);
       }
     }
-
+    // After the initial image pair is registered, 
+    // called callback in the thread to trigger the rendering mechanism in the mainwindow
     Callback(INITIAL_IMAGE_PAIR_REG_CALLBACK);
 
     ////////////////////////////////////////////////////////////////////////////
@@ -514,7 +601,6 @@ void IncrementalMapperController::Reconstruct(
       if (next_images.empty()) {
         break;
       }
-
       for (size_t reg_trial = 0; reg_trial < next_images.size(); ++reg_trial) {
         const image_t next_image_id = next_images[reg_trial];
         const Image& next_image = reconstruction.Image(next_image_id);
@@ -531,9 +617,9 @@ void IncrementalMapperController::Reconstruct(
             mapper.RegisterNextImage(options_->Mapper(), next_image_id);
 
         if (reg_next_success) {
+          mapper.ClearLidarPoints();
           TriangulateImage(*options_, next_image, &mapper);
           IterativeLocalRefinement(*options_, next_image_id, &mapper);
-
           if (reconstruction.NumRegImages() >=
                   options_->ba_global_images_ratio * ba_prev_num_reg_images ||
               reconstruction.NumRegImages() >=
@@ -631,7 +717,85 @@ void IncrementalMapperController::Reconstruct(
         mapper.NumTotalRegImages() >= database_cache_.NumImages() - 1) {
       break;
     }
+
   }
 }
+
+bool IncrementalMapperController::LoadPose() {
+
+  std::ifstream read_pose;
+  read_pose.open(options_->image_pose_prior_path, std::ios::in);
+  if (read_pose.is_open()){
+    std::string str;
+    bool end_header_show = false;
+    image_t image_id = 0;
+    while (getline(read_pose, str)){
+      if (end_header_show){
+        image_id += 1;
+        bool exist_nan = false;
+        std::stringstream ss(str);
+        std::stringstream ifnan(str);
+        std::string s;
+        while (ifnan >> s) {
+          if (s == "nan") {
+            exist_nan = true;
+            break;
+          }
+        }
+        if (exist_nan) {
+          continue;
+        }
+        double d;
+        std::vector<double> pose;
+        while (ss >> d){
+          pose.push_back(d);
+
+        }
+
+        double t_x = -static_cast<double>(pose[1]);
+        double t_y = -static_cast<double>(pose[2]);
+        double t_z = static_cast<double>(pose[0]);
+        double roll = static_cast<double>(pose[3]);
+        double pitch = -static_cast<double>(pose[4]);
+        double yaw = -static_cast<double>(pose[5]);
+
+        Eigen::AngleAxisd rollAngle(Eigen::AngleAxisd(roll,Eigen::Vector3d::UnitZ()));
+        Eigen::AngleAxisd pitchAngle(Eigen::AngleAxisd(pitch,Eigen::Vector3d::UnitX()));
+        Eigen::AngleAxisd yawAngle(Eigen::AngleAxisd(yaw,Eigen::Vector3d::UnitY()));
+      
+        Eigen::Matrix3d rotation_matrix;
+        rotation_matrix = yawAngle * pitchAngle * rollAngle;
+        Eigen::Matrix3d R_wc = rotation_matrix;
+
+        Eigen::Vector3d t_wc;
+        t_wc << t_x, t_y, t_z;
+
+        Eigen::Matrix3d R_cw = R_wc.transpose();
+        Eigen::Vector3d t_cw = - R_cw * t_wc;
+
+        Eigen::Quaterniond q_cw(R_cw);
+        std::vector<double> trans_pose {t_cw(0), t_cw(1), t_cw(2), 
+                              q_cw.w(), q_cw.x(), q_cw.y(), q_cw.z()};
+        image_poses_.emplace(std::make_pair(image_id,trans_pose));
+
+      } else {
+        if (str == "end_header"){
+          end_header_show = true;
+        }
+      }
+    }
+  } else{
+    std::cout << "Please note，failed to open the pose file!" << std::endl;
+    return false;
+  }
+
+  read_pose.close();
+  std::cout<<"Read " << image_poses_.size() << " poses from"<<std::endl
+  << options_->image_pose_prior_path << std::endl
+  << std::endl;
+  return true;
+
+}
+
 
 }  // namespace colmap

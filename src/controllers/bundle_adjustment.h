@@ -35,6 +35,9 @@
 #include "base/reconstruction.h"
 #include "util/option_manager.h"
 #include "util/threading.h"
+#include "lidar/ply.h"
+#include "lidar/pcd_projection.h"
+#include "controllers/incremental_mapper.h"
 
 namespace colmap {
 
@@ -46,9 +49,12 @@ class BundleAdjustmentController : public Thread {
 
  private:
   void Run();
-
+  void LoadPointcloud(std::string& pointcloud_path, 
+                      const lidar::PcdProjectionOptions& pp_options);
+  void ClearLidarPoints();
   const OptionManager options_;
   Reconstruction* reconstruction_;
+  std::shared_ptr<lidar::PointCloudProcess> lidar_pointcloud_process_;
 };
 
 }  // namespace colmap

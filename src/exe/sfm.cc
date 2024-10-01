@@ -470,6 +470,8 @@ int RunPointTriangulatorImpl(Reconstruction& reconstruction,
 
     PrintHeading1("Bundle adjustment");
     BundleAdjuster bundle_adjuster(ba_options, ba_config);
+    const BundleAdjuster::OptimazePhrase phrase = BundleAdjuster::OptimazePhrase::Global;
+    bundle_adjuster.SetOptimazePhrase(phrase);
     CHECK(bundle_adjuster.Solve(&reconstruction));
 
     size_t num_changed_observations = 0;

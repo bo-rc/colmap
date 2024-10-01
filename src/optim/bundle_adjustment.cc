@@ -76,8 +76,12 @@ bool BundleAdjustmentOptions::Check() const {
 // BundleAdjustmentConfig
 ////////////////////////////////////////////////////////////////////////////////
 
-BundleAdjustmentConfig::BundleAdjustmentConfig() {}
+BundleAdjustmentConfig::BundleAdjustmentConfig() {
+  lidar_searched_image_ids_.clear();
+  lidar_maps_.clear();
+}
 
+// image_ids_是一个包含image_id的set
 size_t BundleAdjustmentConfig::NumImages() const { return image_ids_.size(); }
 
 size_t BundleAdjustmentConfig::NumPoints() const {
@@ -139,6 +143,14 @@ size_t BundleAdjustmentConfig::NumResiduals(
 
 void BundleAdjustmentConfig::AddImage(const image_t image_id) {
   image_ids_.insert(image_id);
+}
+
+void BundleAdjustmentConfig::AddLidarPoint(const point3D_t& point3D_id, const class LidarPoint& lidar_point) {
+  lidar_maps_.insert({point3D_id,lidar_point});
+}
+
+void BundleAdjustmentConfig::AddPointcloud(std::shared_ptr<lidar::PointCloudProcess> ptr) {
+  point_cloud_process_ = ptr;
 }
 
 bool BundleAdjustmentConfig::HasImage(const image_t image_id) const {
@@ -218,6 +230,110 @@ void BundleAdjustmentConfig::AddVariablePoint(const point3D_t point3D_id) {
   variable_point3D_ids_.insert(point3D_id);
 }
 
+void BundleAdjustmentConfig::Project2Image(Reconstruction* reconstruction,const point3D_t& point3D_id, const image_t& image_id, const int& match_features_threshold) {
+  Point3D& point3D = reconstruction->Point3D(point3D_id);
+  
+  const auto& track_els = point3D.Track().Elements();
+
+  for (auto& track_el : track_els){
+    image_t image_id2 = track_el.image_id;
+    if (image_id2 != image_id) {
+      if (reconstruction->ExistsImagePair(image_id,image_id2)){
+        size_t corrs = reconstruction->ImagePair(image_id, image_id2).num_total_corrs;
+        if (corrs <= match_features_threshold) {
+          continue;
+        }
+      }
+    }
+    
+    auto ptr = lidar_searched_image_ids_.find(track_el.image_id);
+    if (ptr == lidar_searched_image_ids_.end()){
+      // The image has not been projected into pcd_projection
+      // Read all feature points in the image and find corresponding lidar points
+      Image& image = reconstruction->Image(track_el.image_id);
+      Camera& camera = reconstruction->Camera(image.CameraId());
+
+      std::map<point3D_t,Eigen::Matrix<double,6,1>> map;
+      point_cloud_process_ -> pcd_proj_ -> SetNewImage(image,camera,map);
+      lidar_searched_image_ids_.insert({track_el.image_id,map});
+    }
+  }
+}
+
+void BundleAdjustmentConfig::MatchVariablePoint2LidarPoint(Reconstruction* reconstruction,const point3D_t point3D_id){
+  Point3D& point3D = reconstruction->Point3D(point3D_id);
+  Eigen::Vector3d pt_xyz = point3D.XYZ();
+  double angle = 360;
+  Eigen::Vector6d lidar_pt;
+
+  const auto& track_els = point3D.Track().Elements(); 
+  for (auto& track_el : track_els){
+    auto iter = lidar_searched_image_ids_.find(track_el.image_id);
+    if (iter == lidar_searched_image_ids_.end()) continue;
+    auto lidar_pt_ptr = iter->second.find(point3D_id);
+    if (lidar_pt_ptr != iter->second.end()){
+      Eigen::Matrix<double, 6, 1> lidar_pt_temp = lidar_pt_ptr->second;
+      Eigen::Vector3d norm = lidar_pt_temp.block(3,0,3,1);
+      Eigen::Vector3d vec = pt_xyz - lidar_pt_temp.block(0,0,3,1);
+      double angle_temp = std::abs(vec.dot(norm)/(norm.norm()*vec.norm()));
+      if (angle_temp < angle){
+        angle = angle_temp;
+        lidar_pt = lidar_pt_temp;
+      }
+    }
+  }
+  if (angle != 360){
+    Eigen::Vector3d norm = lidar_pt.block(3,0,3,1);
+    Eigen::Vector3d l_pt = lidar_pt.block(0,0,3,1);
+    double d = 0 - l_pt.dot(norm);
+    Eigen::Vector4d plane;
+    plane << norm(0),norm(1),norm(2),d;
+
+    LidarPoint lidar_point(LidarPointType::Proj,l_pt,plane);
+    lidar_point.SetDist( lidar_point.ComputeDist(pt_xyz));
+    lidar_point.SetAngle( lidar_point.ComputeAngle(pt_xyz));
+    Eigen::Vector3ub color;
+    color << 255,0,0;
+    lidar_point.SetColor(color);
+    AddLidarPoint(point3D_id,lidar_point);
+    reconstruction -> AddLidarPoint(point3D_id,lidar_point);
+  }
+}
+
+void BundleAdjustmentConfig::MatchClosestLidarPoint(Reconstruction* reconstruction, 
+                                                    const point3D_t& point3D_id, 
+                                                    double& max_search_range){
+  Point3D& point3D = reconstruction->Point3D(point3D_id);
+  Eigen::Vector3d pt_xyz = point3D.XYZ();
+  Eigen::Vector6d lidar_pt;
+  if (point_cloud_process_->SearchNearestNeiborByKdtree(pt_xyz,lidar_pt)){
+    Eigen::Vector3d norm = lidar_pt.block(3,0,3,1);
+    Eigen::Vector3d l_pt = lidar_pt.block(0,0,3,1);
+    double d = 0 - l_pt.dot(norm);
+    Eigen::Vector4d plane;
+    plane << norm(0),norm(1),norm(2),d;
+
+    LidarPoint lidar_point(l_pt,plane);
+    if (std::abs(norm(1)/norm(0))>10 && std::abs(norm(1)/norm(2))>10) {
+      lidar_point.SetType(LidarPointType::IcpGround);
+      Eigen::Vector3ub color;
+      color << 255,255,0;
+      lidar_point.SetColor(color);
+    } else {
+      lidar_point.SetType(LidarPointType::Icp);
+      Eigen::Vector3ub color;
+      color << 0,255,0;
+      lidar_point.SetColor(color);
+    }
+    double dist = lidar_point.ComputePointToPointDist(pt_xyz);
+    if (dist > max_search_range) return;
+    lidar_point.SetDist(dist);
+    lidar_point.SetAngle( lidar_point.ComputeAngle(pt_xyz));
+    AddLidarPoint(point3D_id,lidar_point);
+    reconstruction -> AddLidarPoint(point3D_id,lidar_point);
+  }
+}
+
 void BundleAdjustmentConfig::AddConstantPoint(const point3D_t point3D_id) {
   CHECK(!HasVariablePoint(point3D_id));
   constant_point3D_ids_.insert(point3D_id);
@@ -255,6 +371,10 @@ BundleAdjuster::BundleAdjuster(const BundleAdjustmentOptions& options,
   CHECK(options_.Check());
 }
 
+void BundleAdjuster::SetOptimazePhrase(const OptimazePhrase& phrase) {
+  optimize_phrase_ = phrase;
+}
+
 bool BundleAdjuster::Solve(Reconstruction* reconstruction) {
   CHECK_NOTNULL(reconstruction);
   CHECK(!problem_) << "Cannot use the same BundleAdjuster multiple times";
@@ -262,8 +382,18 @@ bool BundleAdjuster::Solve(Reconstruction* reconstruction) {
   problem_ = std::make_unique<ceres::Problem>();
 
   ceres::LossFunction* loss_function = options_.CreateLossFunction();
-  SetUp(reconstruction, loss_function);
-
+  if(options_.if_add_lidar_constraint && optimize_phrase_ == OptimazePhrase::Local) {
+    SetUpLocalByLidar(reconstruction, loss_function);
+  } else if (options_.if_add_lidar_constraint && optimize_phrase_ == OptimazePhrase::Global) {
+    SetUpGlobalByLidar(reconstruction, loss_function);
+  } else if (options_.if_add_lidar_constraint && optimize_phrase_ == OptimazePhrase::WholeMap) {
+    SetUpAdjustWholeMapByLidar(reconstruction, loss_function);
+  } else if (!options_.if_add_lidar_constraint) {
+    SetUp(reconstruction, loss_function);
+  } else {
+    std::cout<<"The correct optimization type is missing, error occurred."<<std::endl;
+  }
+  
   if (problem_->NumResiduals() == 0) {
     return false;
   }
@@ -333,8 +463,77 @@ void BundleAdjuster::SetUp(Reconstruction* reconstruction,
   for (const auto point3D_id : config_.VariablePoints()) {
     AddPointToProblem(point3D_id, reconstruction, loss_function);
   }
+
   for (const auto point3D_id : config_.ConstantPoints()) {
     AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  ParameterizeCameras(reconstruction);
+  ParameterizePoints(reconstruction);
+}
+
+void BundleAdjuster::SetUpLocalByLidar(Reconstruction* reconstruction,
+                           ceres::LossFunction* loss_function) {
+  // Warning: AddPointsToProblem assumes that AddImageToProblem is called first.
+  // Do not change order of instructions!
+  for (const image_t image_id : config_.Images()) {
+    AddImageToProblem(image_id, reconstruction, loss_function);
+  }
+  for (const auto point3D_id : config_.VariablePoints()) {
+    AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  for (auto iter = config_.lidar_maps_.begin(); iter != config_.lidar_maps_.end(); iter++){
+    const auto point3D_id = iter->first;
+    AddLidarToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  for (const auto point3D_id : config_.ConstantPoints()) {
+    AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  ParameterizeCameras(reconstruction);
+  ParameterizePoints(reconstruction);
+}
+
+void BundleAdjuster::SetUpGlobalByLidar(Reconstruction* reconstruction,
+                           ceres::LossFunction* loss_function) {
+
+  for (const image_t image_id : config_.Images()) {
+      AddImageInSphereToProblem(image_id, reconstruction, loss_function);
+  }
+  
+  for (const auto point3D_id : config_.VariablePoints()) {
+    AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  for (auto iter = config_.lidar_maps_.begin(); iter != config_.lidar_maps_.end(); iter++){
+    const auto point3D_id = iter->first;
+    AddLidarToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  for (const auto point3D_id : config_.ConstantPoints()) {
+    AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  ParameterizeCameras(reconstruction);
+  ParameterizePoints(reconstruction);
+}
+
+void BundleAdjuster::SetUpAdjustWholeMapByLidar(Reconstruction* reconstruction,
+                           ceres::LossFunction* loss_function) {
+
+  for (const image_t image_id : config_.Images()) {
+      AddImageToProblem(image_id, reconstruction, loss_function);
+  }
+  
+  for (const auto point3D_id : config_.VariablePoints()) {
+    AddPointToProblem(point3D_id, reconstruction, loss_function);
+  }
+
+  for (auto iter = config_.lidar_maps_.begin(); iter != config_.lidar_maps_.end(); iter++){
+    const auto point3D_id = iter->first;
+    AddLidarToProblem(point3D_id, reconstruction, loss_function);
   }
 
   ParameterizeCameras(reconstruction);
@@ -345,9 +544,10 @@ void BundleAdjuster::TearDown(Reconstruction*) {
   // Nothing to do
 }
 
-void BundleAdjuster::AddImageToProblem(const image_t image_id,
+void BundleAdjuster::AddImageInSphereToProblem(const image_t image_id,
                                        Reconstruction* reconstruction,
                                        ceres::LossFunction* loss_function) {
+
   Image& image = reconstruction->Image(image_id);
   Camera& camera = reconstruction->Camera(image.CameraId());
 
@@ -372,6 +572,10 @@ void BundleAdjuster::AddImageToProblem(const image_t image_id,
     point3D_num_observations_[point2D.Point3DId()] += 1;
 
     Point3D& point3D = reconstruction->Point3D(point2D.Point3DId());
+    if (!point3D.IfInSphere()) {
+      continue;
+    }
+
     assert(point3D.Track().Length() > 1);
 
     ceres::CostFunction* cost_function = nullptr;
@@ -392,7 +596,8 @@ void BundleAdjuster::AddImageToProblem(const image_t image_id,
 
       problem_->AddResidualBlock(cost_function, loss_function,
                                  point3D.XYZ().data(), camera_params_data);
-    } else {
+    } 
+    else {
       switch (camera.ModelId()) {
 #define CAMERA_MODEL_CASE(CameraModel)                                   \
   case CameraModel::kModelId:                                            \
@@ -416,6 +621,86 @@ void BundleAdjuster::AddImageToProblem(const image_t image_id,
 
     // Set pose parameterization.
     if (!constant_pose) {
+
+      SetQuaternionManifold(problem_.get(), qvec_data);
+      if (config_.HasConstantTvec(image_id)) {
+        const std::vector<int>& constant_tvec_idxs =
+            config_.ConstantTvec(image_id);
+        SetSubsetManifold(3, constant_tvec_idxs, problem_.get(), tvec_data);
+      }
+    }
+  }
+}
+
+void BundleAdjuster::AddImageToProblem(const image_t image_id,
+                                       Reconstruction* reconstruction,
+                                       ceres::LossFunction* loss_function) {
+  Image& image = reconstruction->Image(image_id);
+  Camera& camera = reconstruction->Camera(image.CameraId());
+
+  // CostFunction assumes unit quaternions.
+  image.NormalizeQvec();
+
+  double* qvec_data = image.Qvec().data();
+  double* tvec_data = image.Tvec().data();
+  double* camera_params_data = camera.ParamsData();
+  const bool constant_pose =
+      !options_.refine_extrinsics || config_.HasConstantPose(image_id);
+
+  // Add residuals to bundle adjustment problem.
+  size_t num_observations = 0;
+  for (const Point2D& point2D : image.Points2D()) {
+    if (!point2D.HasPoint3D()) {
+      continue;
+    }
+    num_observations += 1;
+    point3D_num_observations_[point2D.Point3DId()] += 1;
+    Point3D& point3D = reconstruction->Point3D(point2D.Point3DId());
+    assert(point3D.Track().Length() > 1);
+    ceres::CostFunction* cost_function = nullptr;
+
+    if (constant_pose) {
+      switch (camera.ModelId()) {
+#define CAMERA_MODEL_CASE(CameraModel)                                 \
+  case CameraModel::kModelId:                                          \
+    cost_function =                                                    \
+        BundleAdjustmentConstantPoseCostFunction<CameraModel>::Create( \
+            image.Qvec(), image.Tvec(), point2D.XY());                 \
+    break;
+
+        CAMERA_MODEL_SWITCH_CASES
+
+#undef CAMERA_MODEL_CASE
+      }
+
+      problem_->AddResidualBlock(cost_function, loss_function,
+                                 point3D.XYZ().data(), camera_params_data);
+    } 
+    else {
+      switch (camera.ModelId()) {
+#define CAMERA_MODEL_CASE(CameraModel)                                   \
+  case CameraModel::kModelId:                                            \
+    cost_function =                                                      \
+        BundleAdjustmentCostFunction<CameraModel>::Create(point2D.XY()); \
+    break;
+
+        CAMERA_MODEL_SWITCH_CASES
+
+#undef CAMERA_MODEL_CASE
+      }
+
+      problem_->AddResidualBlock(cost_function, loss_function, qvec_data,
+                                 tvec_data, point3D.XYZ().data(),
+                                 camera_params_data);
+    }
+  }
+
+  if (num_observations > 0) {
+    camera_ids_.insert(image.CameraId());
+
+    // Set pose parameterization.
+    if (!constant_pose) {
+
       SetQuaternionManifold(problem_.get(), qvec_data);
       if (config_.HasConstantTvec(image_id)) {
         const std::vector<int>& constant_tvec_idxs =
@@ -438,6 +723,7 @@ void BundleAdjuster::AddPointToProblem(const point3D_t point3D_id,
     return;
   }
 
+  // track_el is a struct including image_id and point2d_id
   for (const auto& track_el : point3D.Track().Elements()) {
     // Skip observations that were already added in `FillImages`.
     if (config_.HasImage(track_el.image_id)) {
@@ -475,6 +761,41 @@ void BundleAdjuster::AddPointToProblem(const point3D_t point3D_id,
     problem_->AddResidualBlock(cost_function, loss_function,
                                point3D.XYZ().data(), camera.ParamsData());
   }
+}
+
+void BundleAdjuster::AddLidarToProblem(const point3D_t point3D_id,
+                                       Reconstruction* reconstruction,
+                                       ceres::LossFunction* loss_function) {
+                        
+  Point3D& point3D = reconstruction->Point3D(point3D_id);
+  auto ptr = config_.lidar_maps_.find(point3D_id);
+  if (ptr != config_.lidar_maps_.end()){
+    Eigen::Matrix<double,4,1> abcd = ptr->second.LidarABCD();
+
+    for (int i = 0; i < 4; i++){
+      if(std::isnan(abcd(i))){
+        return;
+      } 
+    }
+
+    double w;
+    LidarPointType type = ptr->second.Type();
+    if (type == LidarPointType::Proj){
+        w = options_.proj_lidar_constraint_weight;
+    } else if (type == LidarPointType::Icp){
+      w = options_.icp_lidar_constraint_weight;
+    } else if (type == LidarPointType::IcpGround){
+      w = options_.icp_ground_lidar_constraint_weight;
+    } else {
+      std::cout<<"This lidar point type is missing"<<std::endl;
+      return;
+    }
+    ceres::CostFunction* cost_function = nullptr;
+    cost_function =BundleAdjustmentLidarCostFunction::Create( 
+            abcd,w); 
+    problem_->AddResidualBlock(cost_function, loss_function, point3D.XYZ().data());
+  }
+  
 }
 
 void BundleAdjuster::ParameterizeCameras(Reconstruction* reconstruction) {

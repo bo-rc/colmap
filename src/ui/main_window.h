@@ -57,7 +57,6 @@
 #include "util/bitmap.h"
 
 namespace colmap {
-
 class MainWindow : public QMainWindow {
  public:
   explicit MainWindow(const OptionManager& options);
@@ -108,7 +107,8 @@ class MainWindow : public QMainWindow {
 
   void BundleAdjustment();
   void DenseReconstruction();
-
+  void LoadLidarPoint();
+  void SaveImagePoses();
   void Render();
   void RenderNow();
   void RenderToggle();
@@ -209,6 +209,8 @@ class MainWindow : public QMainWindow {
 
   QAction* action_bundle_adjustment_;
   QAction* action_dense_reconstruction_;
+  QAction* action_load_lidar_map_;
+  QAction* action_save_image_poses_;
 
   QAction* action_render_;
   QAction* action_render_now_;
@@ -233,8 +235,12 @@ class MainWindow : public QMainWindow {
 
   std::vector<QAction*> blocking_actions_;
 
+  bool lidar_map_show_ = false;
+
   // Necessary for OS X to avoid duplicate closeEvents.
   bool window_closed_;
+
+
 };
 
 }  // namespace colmap

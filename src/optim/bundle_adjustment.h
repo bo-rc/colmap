@@ -34,11 +34,12 @@
 
 #include <memory>
 #include <unordered_set>
-
+#include <fstream>
 #include <Eigen/Core>
 
 #include <ceres/ceres.h>
-
+#include "lidar/lidar_point.h"
+#include "lidar/ply.h"
 #include "PBA/pba.h"
 #include "base/camera_rig.h"
 #include "base/reconstruction.h"
@@ -46,7 +47,21 @@
 
 namespace colmap {
 
+//参数的结构，包括损失函数类型，
 struct BundleAdjustmentOptions {
+  // Lidar poiny cloud file path
+  std::string lidar_pointcloud_path;
+  // If use existed lidar point cloud map to assist mapping
+  bool if_add_lidar_constraint = true;
+  // Weight used to optimize
+  // Lidar point in projection process
+  double proj_lidar_constraint_weight = 1.0;
+  // Lidar point in Icp process
+  double icp_lidar_constraint_weight = 100.0;
+  // Lidar point (belong to ground) in Icp process
+  double icp_ground_lidar_constraint_weight = 1000.0;
+  bool if_add_lidar_corresponding = true;
+  int ba_match_features_threshold;
   // Loss function types: Trivial (non-robust) and Cauchy (robust) loss.
   enum class LossFunctionType { TRIVIAL, SOFT_L1, CAUCHY };
   LossFunctionType loss_function_type = LossFunctionType::TRIVIAL;
@@ -55,13 +70,13 @@ struct BundleAdjustmentOptions {
   double loss_function_scale = 1.0;
 
   // Whether to refine the focal length parameter group.
-  bool refine_focal_length = true;
+  bool refine_focal_length = false;
 
   // Whether to refine the principal point parameter group.
   bool refine_principal_point = false;
 
   // Whether to refine the extra parameter group.
-  bool refine_extra_params = true;
+  bool refine_extra_params = false;
 
   // Whether to refine the extrinsic parameter group.
   bool refine_extrinsics = true;
@@ -78,7 +93,7 @@ struct BundleAdjustmentOptions {
   ceres::Solver::Options solver_options;
 
   BundleAdjustmentOptions() {
-    solver_options.function_tolerance = 0.0;
+    solver_options.function_tolerance = 0.0;//Δcost/cost
     solver_options.gradient_tolerance = 0.0;
     solver_options.parameter_tolerance = 0.0;
     solver_options.minimizer_progress_to_stdout = false;
@@ -118,6 +133,10 @@ class BundleAdjustmentConfig {
 
   // Add / remove images from the configuration.
   void AddImage(const image_t image_id);
+  void AddLidarPoint(const point3D_t& point3D_id, const class LidarPoint& lidar_point);
+  // Add lidar point cloud 
+  void AddPointcloud(std::shared_ptr<lidar::PointCloudProcess> ptr);
+
   bool HasImage(const image_t image_id) const;
   void RemoveImage(const image_t image_id);
 
@@ -141,6 +160,13 @@ class BundleAdjustmentConfig {
   void RemoveConstantTvec(const image_t image_id);
   bool HasConstantTvec(const image_t image_id) const;
 
+  // Find 3d point and relative lidar point
+  void Project2Image(Reconstruction* reconstruction,const point3D_t& point3D_id, const image_t& image_id, const int& match_features_threshold);
+  void MatchVariablePoint2LidarPoint(Reconstruction* reconstruction,const point3D_t point3D_id);
+  void MatchClosestLidarPoint(Reconstruction* reconstruction,const point3D_t& point3D_id, double& max_search_range);
+  void SetLidarPoint(const point3D_t point3D_id, const std::vector<double>& lidar_pt);
+
+
   // Add / remove points from the configuration. Note that points can either
   // be variable or constant but not both at the same time.
   void AddVariablePoint(const point3D_t point3D_id);
@@ -157,6 +183,13 @@ class BundleAdjustmentConfig {
   const std::unordered_set<point3D_t>& ConstantPoints() const;
   const std::vector<int>& ConstantTvec(const image_t image_id) const;
 
+  // images that have done lidar point cloud projection
+  // key: image_id, value : map (key: point3d_id, value: lidar point coordinate and normal vector)
+  std::map<image_t,std::map<point3D_t,Eigen::Matrix<double,6,1>>> lidar_searched_image_ids_;
+
+  EIGEN_STL_UMAP(point3D_t, class LidarPoint) lidar_maps_;
+  std::shared_ptr<lidar::PointCloudProcess> point_cloud_process_;
+
  private:
   std::unordered_set<camera_t> constant_camera_ids_;
   std::unordered_set<image_t> image_ids_;
@@ -170,8 +203,11 @@ class BundleAdjustmentConfig {
 // and provides best solution quality.
 class BundleAdjuster {
  public:
+  enum class OptimazePhrase{Local, Global, WholeMap};
   BundleAdjuster(const BundleAdjustmentOptions& options,
                  const BundleAdjustmentConfig& config);
+
+  void SetOptimazePhrase(const OptimazePhrase& phrase);
 
   bool Solve(Reconstruction* reconstruction);
 
@@ -181,19 +217,33 @@ class BundleAdjuster {
  private:
   void SetUp(Reconstruction* reconstruction,
              ceres::LossFunction* loss_function);
+  void SetUpLocalByLidar(Reconstruction* reconstruction,
+             ceres::LossFunction* loss_function);
+  void SetUpGlobalByLidar(Reconstruction* reconstruction,
+             ceres::LossFunction* loss_function);
+  void SetUpAdjustWholeMapByLidar(Reconstruction* reconstruction,
+                           ceres::LossFunction* loss_function);
   void TearDown(Reconstruction* reconstruction);
 
   void AddImageToProblem(const image_t image_id, Reconstruction* reconstruction,
+                         ceres::LossFunction* loss_function);
+  // Take the image position as the center of the circle to make a ball shape, 
+  // and add images inside the sphere to the optimization
+  void AddImageInSphereToProblem(const image_t image_id, Reconstruction* reconstruction,
                          ceres::LossFunction* loss_function);
 
   void AddPointToProblem(const point3D_t point3D_id,
                          Reconstruction* reconstruction,
                          ceres::LossFunction* loss_function);
-
+  
+  void AddLidarToProblem(const point3D_t point3D_id,
+                         Reconstruction* reconstruction,
+                         ceres::LossFunction* loss_function);
  protected:
   void ParameterizeCameras(Reconstruction* reconstruction);
   void ParameterizePoints(Reconstruction* reconstruction);
 
+  OptimazePhrase optimize_phrase_;
   const BundleAdjustmentOptions options_;
   BundleAdjustmentConfig config_;
   std::unique_ptr<ceres::Problem> problem_;

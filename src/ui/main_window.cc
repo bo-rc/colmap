@@ -44,7 +44,6 @@ MainWindow::MainWindow(const OptionManager& options)
   std::setlocale(LC_NUMERIC, "C");
   resize(1024, 600);
   UpdateWindowTitle();
-
   CreateWidgets();
   CreateActions();
   CreateMenus();
@@ -135,7 +134,6 @@ void MainWindow::CreateActions() {
   //////////////////////////////////////////////////////////////////////////////
   // File actions
   //////////////////////////////////////////////////////////////////////////////
-
   action_project_new_ =
       new QAction(QIcon(":/media/project-new.png"), tr("New project"), this);
   action_project_new_->setShortcuts(QKeySequence::New);
@@ -233,7 +231,6 @@ void MainWindow::CreateActions() {
                   tr("Automatic reconstruction"), this);
   connect(action_automatic_reconstruction_, &QAction::triggered, this,
           &MainWindow::AutomaticReconstruction);
-
   action_reconstruction_start_ =
       new QAction(QIcon(":/media/reconstruction-start.png"),
                   tr("Start reconstruction"), this);
@@ -288,7 +285,18 @@ void MainWindow::CreateActions() {
                   tr("Dense reconstruction"), this);
   connect(action_dense_reconstruction_, &QAction::triggered, this,
           &MainWindow::DenseReconstruction);
+  
+  action_load_lidar_map_ = 
+      new QAction(QIcon(":/media/lidar.png"),
+                  tr("Point cloud display on"), this);
+  connect(action_load_lidar_map_, &QAction::triggered, this,
+          &MainWindow::LoadLidarPoint);
 
+  action_save_image_poses_ = 
+      new QAction(QIcon(":/media/pose.png"),
+                  tr("Save pose file"), this);
+  connect(action_save_image_poses_, &QAction::triggered, this,
+          &MainWindow::SaveImagePoses);
   //////////////////////////////////////////////////////////////////////////////
   // Render actions
   //////////////////////////////////////////////////////////////////////////////
@@ -488,6 +496,8 @@ void MainWindow::CreateToolbar() {
   reconstruction_toolbar_->addAction(action_reconstruction_options_);
   reconstruction_toolbar_->addAction(action_bundle_adjustment_);
   reconstruction_toolbar_->addAction(action_dense_reconstruction_);
+  reconstruction_toolbar_->addAction(action_load_lidar_map_);
+  reconstruction_toolbar_->addAction(action_save_image_poses_);
   reconstruction_toolbar_->setIconSize(QSize(16, 16));
 
   render_toolbar_ = addToolBar(tr("Render"));
@@ -1046,6 +1056,131 @@ void MainWindow::DenseReconstruction() {
     dense_reconstruction_widget_->Show(nullptr);
   }
 }
+void MainWindow::LoadLidarPoint(){
+  if (!lidar_map_show_){
+    std::cout<<std::endl;
+    std::cout<<"Point cloud display on"<<std::endl;
+    std::cout<<std::endl;
+
+    model_viewer_widget_->UploadLidarMapData();
+    action_load_lidar_map_->setText(tr("Point cloud display off"));
+    lidar_map_show_ = true;
+  } else {
+    std::cout<<std::endl;
+    std::cout<<"Point cloud display off"<<std::endl;
+    std::cout<<std::endl;
+
+    action_load_lidar_map_->setText(tr("Point cloud display on"));
+    model_viewer_widget_->RemoveLidarMapData();
+    lidar_map_show_ = false;
+  }
+}
+
+void MainWindow::SaveImagePoses(){
+  if (!mapper_controller_->IsStarted() && !options_.Check()) {
+    ShowInvalidProjectError();
+    return;
+  }
+  if (mapper_controller_->IsStarted() || mapper_controller_->IsFinished()) {
+    if (!HasSelectedReconstruction()) {
+      std::cout << "No useful reconstruction result" << std::endl;
+      return;
+    }
+  }
+
+  if (options_.mapper->image_pose_save_folder == ""){
+    std::cout << "Pose file path undefined" << std::endl;
+  }
+
+  const Reconstruction& reconstruction =
+    reconstruction_manager_.Get(SelectedReconstructionIdx());
+  std::string traj_path = options_.mapper->image_pose_save_folder + "/"+"pose.ply";
+  std::ofstream traj_writeout;
+  traj_writeout.open(traj_path, std::ios::out);
+  if (!traj_writeout){
+    std::cout << "Write out traj fail" << std::endl;
+    return;
+  }
+
+  // int image_num = mapper_controller_->database_cache_.NumImages();
+  // std::vector<std::string> image_list = (options_.image_reader)->image_list;
+  // int image_num = image_list.size();
+
+  // std::unique_ptr<IncrementalMapperController> mapper_controller_
+  int image_num = mapper_controller_ -> OriginImagesNum();
+  // database_management_widget_-> NumImages();
+
+  traj_writeout << "ply" << std::endl
+                << "format ascii 1.0" << std::endl
+                << "element vertex " << image_num << std::endl
+                << "property float x" << std::endl
+                << "property float y" << std::endl
+                << "property float z" << std::endl
+                << "property float roll" << std::endl
+                << "property float pitch" << std::endl
+                << "property float yaw" << std::endl
+                << "end_header" << std::endl;
+  
+  const EIGEN_STL_UMAP(image_t, class Image) images = reconstruction.Images();
+  for (int i = 1; i <= image_num; i++){
+    image_t image_id = i;
+    auto iter = images.find(image_id);
+    if (iter == images.end()) {
+      traj_writeout << "nan" << " "
+                    << "nan" << " "
+                    << "nan" << " "
+                    << "nan" << " "
+                    << "nan" << " "
+                    << "nan" << std::endl;
+    } else {
+      Image image = iter->second;
+      const Eigen::Vector3d t_cw =  image.Tvec();
+      const Eigen::Vector4d q_cw =  image.Qvec();
+
+      Eigen::Quaterniond quaternion(q_cw(0), q_cw(1),q_cw(2), q_cw(3));
+      Eigen::Matrix3d R_cw = quaternion.matrix();
+
+      Eigen::Matrix3d R_wc = R_cw.transpose();
+      Eigen::Vector3d t_wc = - R_wc * t_cw;
+      // eular angle is radian[rad]
+      Eigen::Vector3d euler_angle = R_wc.eulerAngles(1,0,2);
+      double roll = euler_angle(2);
+      double pitch = -euler_angle(1);
+      double yaw = -euler_angle(0);
+
+      if (pitch < -M_PI / 2 || pitch > M_PI / 2) {
+        roll += M_PI;
+        pitch = M_PI - pitch;
+        yaw += M_PI;
+      }
+
+      if (roll < -M_PI) roll += 2 * M_PI;
+      else if (roll > M_PI) roll -= 2 * M_PI;
+      if (pitch < -M_PI) pitch += 2 * M_PI;
+      else if (pitch > M_PI) pitch -= 2 * M_PI;
+      if (yaw < -M_PI) yaw += 2 * M_PI;
+      else if (yaw > M_PI) yaw -= 2 * M_PI;
+
+      double tx = t_wc(2);
+      double ty = -t_wc(0);
+      double tz = -t_wc(1);
+      traj_writeout << static_cast<float>(tx) << " "
+                    << static_cast<float>(ty) << " "
+                    << static_cast<float>(tz) << " "
+                    << static_cast<float>(roll) << " "
+                    << static_cast<float>(pitch) << " "
+                    << static_cast<float>(yaw) << std::endl;
+    }
+  }
+  
+  traj_writeout.close();
+
+  std::cout << std::endl;
+  std::cout << "Pose file saved to "<< std::endl
+            << traj_path <<std::endl;
+  std::cout << std::endl;
+
+}
 
 void MainWindow::Render() {
   if (reconstruction_manager_.Size() == 0) {
@@ -1083,7 +1218,6 @@ void MainWindow::RenderSelectedReconstruction() {
     RenderClear();
     return;
   }
-
   const size_t reconstruction_idx = SelectedReconstructionIdx();
   model_viewer_widget_->reconstruction =
       &reconstruction_manager_.Get(reconstruction_idx);
@@ -1308,14 +1442,14 @@ void MainWindow::DisableBlockingActions() {
 
 void MainWindow::UpdateWindowTitle() {
   if (*options_.project_path == "") {
-    setWindowTitle(QString::fromStdString("COLMAP"));
+    setWindowTitle(QString::fromStdString("OB-LiDAR"));
   } else {
     std::string project_title = *options_.project_path;
     if (project_title.size() > 80) {
       project_title =
           "..." + project_title.substr(project_title.size() - 77, 77);
     }
-    setWindowTitle(QString::fromStdString("COLMAP - " + project_title));
+    setWindowTitle(QString::fromStdString("OB-LiDAR - " + project_title));
   }
 }
 

@@ -228,7 +228,7 @@ bool RefineAbsolutePose(const AbsolutePoseRefinementOptions& options,
 #define CAMERA_MODEL_CASE(CameraModel)                                  \
   case CameraModel::kModelId:                                           \
     cost_function =                                                     \
-        BundleAdjustmentCostFunction<CameraModel>::Create(points2D[i]); \
+        BundleAdjustmentConstantPoint3DCostFunction<CameraModel>::Create(points2D[i], points3D[i]); \
     break;
 
       CAMERA_MODEL_SWITCH_CASES
@@ -237,8 +237,7 @@ bool RefineAbsolutePose(const AbsolutePoseRefinementOptions& options,
     }
 
     problem.AddResidualBlock(cost_function, loss_function, qvec_data, tvec_data,
-                             points3D_copy[i].data(), camera_params_data);
-    problem.SetParameterBlockConstant(points3D_copy[i].data());
+                             camera_params_data);
   }
 
   if (problem.NumResiduals() > 0) {

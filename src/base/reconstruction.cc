@@ -119,6 +119,13 @@ void Reconstruction::SetUp(const CorrespondenceGraph* correspondence_graph) {
     }
   }
 }
+void Reconstruction::ClearLidarPoints(){
+  lidar_points_.clear();
+}
+
+void Reconstruction::ClearLidarPointsInGlobal(){
+  lidar_points_in_global_.clear();
+}
 
 void Reconstruction::TearDown() {
   correspondence_graph_ = nullptr;
@@ -160,6 +167,14 @@ void Reconstruction::AddCamera(class Camera camera) {
 void Reconstruction::AddImage(class Image image) {
   const image_t image_id = image.ImageId();
   CHECK(images_.emplace(image_id, std::move(image)).second);
+}
+
+void Reconstruction::AddLidarPoint(const point3D_t& point3D_id, LidarPoint& lidar_point){
+  lidar_points_.insert({point3D_id, lidar_point});
+}
+
+void Reconstruction::AddLidarPointInGlobal(const point3D_t& point3D_id, LidarPoint& lidar_point){
+  lidar_points_in_global_.insert({point3D_id, lidar_point});
 }
 
 point3D_t Reconstruction::AddPoint3D(const Eigen::Vector3d& xyz, Track track,
@@ -615,6 +630,41 @@ size_t Reconstruction::FilterPoints3D(
   return num_filtered;
 }
 
+size_t Reconstruction::FilterLidarOutlier(const double max_proj_dist_error,const double max_icp_dist_error) {
+    size_t num_filtered = 0;
+    std::vector<point3D_t> ids;
+    for (auto iter = lidar_points_.begin();iter != lidar_points_.end(); iter ++){
+      ids.push_back(iter->first);
+    }
+
+    for (point3D_t& point3D_id : ids){
+      if (!ExistsPoint3D(point3D_id)) {
+        lidar_points_.erase(point3D_id);
+        continue;
+      }
+      auto iter = lidar_points_.find(point3D_id);
+      if (iter != lidar_points_.end()){
+        LidarPoint l_pt = iter->second;
+        Eigen::Vector3d i_pt_xyz =  Point3D(point3D_id).XYZ();
+        double dist = l_pt.ComputePointToPointDist(i_pt_xyz);
+        if (l_pt.Type() == LidarPointType::Proj){
+          if (dist > max_proj_dist_error) {
+            // DeletePoint3D(point3D_id);
+            lidar_points_.erase(point3D_id);
+            num_filtered += 1;
+          }
+        } else {
+          if (dist > max_icp_dist_error) {
+            // DeletePoint3D(point3D_id);
+            lidar_points_.erase(point3D_id);
+            num_filtered += 1;
+          }
+        }
+        
+      }
+    }
+    return num_filtered;
+}
 size_t Reconstruction::FilterPoints3DInImages(
     const double max_reproj_error, const double min_tri_angle,
     const std::unordered_set<image_t>& image_ids) {
@@ -641,6 +691,8 @@ size_t Reconstruction::FilterAllPoints3D(const double max_reproj_error,
       FilterPoints3DWithLargeReprojectionError(max_reproj_error, point3D_ids);
   num_filtered +=
       FilterPoints3DWithSmallTriangulationAngle(min_tri_angle, point3D_ids);
+  num_filtered +=
+      FilterObservationsWithNegativeDepth();
   return num_filtered;
 }
 
