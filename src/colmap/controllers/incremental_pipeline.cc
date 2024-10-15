@@ -32,6 +32,7 @@
 #include "colmap/util/file.h"
 #include "colmap/util/misc.h"
 #include "colmap/util/timer.h"
+#include <iomanip>
 
 namespace colmap {
 namespace {
@@ -62,13 +63,14 @@ void WriteSnapshot(const Reconstruction& reconstruction,
                    const std::string& snapshot_path) {
   LOG(INFO) << "Creating snapshot";
   // Get the current timestamp in milliseconds.
-  const size_t timestamp =
-      std::chrono::duration_cast<std::chrono::milliseconds>(
-          std::chrono::high_resolution_clock::now().time_since_epoch())
-          .count();
-  // Write reconstruction to unique path with current timestamp.
+  const auto now = std::chrono::system_clock::now();
+  const auto now_time_t = std::chrono::system_clock::to_time_t(now);
+  const auto now_tm = *std::localtime(&now_time_t);
+  std::ostringstream oss;
+  oss << std::put_time(&now_tm, "%Y%m%d%H%M%S");
+  const std::string timestamp_str = oss.str();
   const std::string path =
-      JoinPaths(snapshot_path, StringPrintf("%010d", timestamp));
+      JoinPaths(snapshot_path, timestamp_str);
   CreateDirIfNotExists(path);
   VLOG(1) << "=> Writing to " << path;
   reconstruction.Write(path);
