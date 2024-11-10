@@ -352,15 +352,23 @@ ceres::Solver::Options BundleAdjuster::SetUpSolverOptions(
       options_.max_num_images_direct_sparse_cpu_solver;
 
 #ifdef COLMAP_CUDA_ENABLED
-#if (CERES_VERSION_MAJOR >= 3 || \
-     (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 2))
+  bool cuda_solver_enabled = false;
+
+#if (CERES_VERSION_MAJOR >= 3 ||                                \
+     (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 2)) && \
+    !defined(CERES_NO_CUDA)
   if (options_.use_gpu && num_images >= options_.min_num_images_gpu_solver) {
-    const std::vector<int> gpu_indices = CSVToVector<int>(options_.gpu_index);
-    THROW_CHECK_GT(gpu_indices.size(), 0);
-    SetBestCudaDevice(gpu_indices[0]);
+    cuda_solver_enabled = true;
     solver_options.dense_linear_algebra_library_type = ceres::CUDA;
     max_num_images_direct_dense_solver =
         options_.max_num_images_direct_dense_gpu_solver;
+  }
+#else
+  if (options_.use_gpu) {
+    LOG_FIRST_N(WARNING, 1)
+        << "Requested to use GPU for bundle adjustment, but Ceres was "
+           "compiled without CUDA support. Falling back to CPU-based dense "
+           "solvers.";
   }
 #endif
 
@@ -368,12 +376,32 @@ ceres::Solver::Options BundleAdjuster::SetUpSolverOptions(
      (CERES_VERSION_MAJOR == 2 && CERES_VERSION_MINOR >= 3)) && \
     !defined(CERES_NO_CUDSS)
   if (options_.use_gpu && num_images >= options_.min_num_images_gpu_solver) {
+    cuda_solver_enabled = true;
     solver_options.sparse_linear_algebra_library_type = ceres::CUDA_SPARSE;
     max_num_images_direct_sparse_solver =
         options_.max_num_images_direct_sparse_gpu_solver;
   }
+#else
+  if (options_.use_gpu) {
+    LOG_FIRST_N(WARNING, 1)
+        << "Requested to use GPU for bundle adjustment, but Ceres was "
+           "compiled without cuDSS support. Falling back to CPU-based sparse "
+           "solvers.";
+  }
 #endif
-#endif
+
+  if (cuda_solver_enabled) {
+    const std::vector<int> gpu_indices = CSVToVector<int>(options_.gpu_index);
+    THROW_CHECK_GT(gpu_indices.size(), 0);
+    SetBestCudaDevice(gpu_indices[0]);
+  }
+#else
+  if (options_.use_gpu) {
+    LOG_FIRST_N(WARNING, 1)
+        << "Requested to use GPU for bundle adjustment, but COLMAP was "
+           "compiled without CUDA support. Falling back to CPU-based solvers.";
+  }
+#endif  // COLMAP_CUDA_ENABLED
 
   if (num_images <= max_num_images_direct_dense_solver) {
     solver_options.linear_solver_type = ceres::DENSE_SCHUR;
@@ -411,6 +439,7 @@ void BundleAdjuster::AddImageToProblem(const image_t image_id,
   Camera& camera = *image.CameraPtr();
 
   // CostFunction assumes unit quaternions.
+  THROW_CHECK(image.HasPose());
   image.CamFromWorld().rotation.normalize();
 
   double* cam_from_world_rotation =
@@ -436,19 +465,20 @@ void BundleAdjuster::AddImageToProblem(const image_t image_id,
 
     if (constant_cam_pose) {
       problem_->AddResidualBlock(
-          CameraCostFunction<ReprojErrorConstantPoseCostFunction>(
-              camera.model_id, image.CamFromWorld(), point2D.xy),
+          CreateCameraCostFunction<ReprojErrorConstantPoseCostFunctor>(
+              camera.model_id, point2D.xy, image.CamFromWorld()),
           loss_function,
           point3D.xyz.data(),
           camera_params);
     } else {
-      problem_->AddResidualBlock(CameraCostFunction<ReprojErrorCostFunction>(
-                                     camera.model_id, point2D.xy),
-                                 loss_function,
-                                 cam_from_world_rotation,
-                                 cam_from_world_translation,
-                                 point3D.xyz.data(),
-                                 camera_params);
+      problem_->AddResidualBlock(
+          CreateCameraCostFunction<ReprojErrorCostFunctor>(camera.model_id,
+                                                           point2D.xy),
+          loss_function,
+          cam_from_world_rotation,
+          cam_from_world_translation,
+          point3D.xyz.data(),
+          camera_params);
     }
   }
 
@@ -505,8 +535,8 @@ void BundleAdjuster::AddPointToProblem(const point3D_t point3D_id,
       config_.SetConstantCamIntrinsics(image.CameraId());
     }
     problem_->AddResidualBlock(
-        CameraCostFunction<ReprojErrorConstantPoseCostFunction>(
-            camera.model_id, image.CamFromWorld(), point2D.xy),
+        CreateCameraCostFunction<ReprojErrorConstantPoseCostFunctor>(
+            camera.model_id, point2D.xy, image.CamFromWorld()),
         loss_function,
         point3D.xyz.data(),
         camera.params.data());
@@ -730,30 +760,32 @@ void RigBundleAdjuster::AddImageToProblem(const image_t image_id,
     if (camera_rig == nullptr) {
       if (constant_cam_pose) {
         problem_->AddResidualBlock(
-            CameraCostFunction<ReprojErrorConstantPoseCostFunction>(
-                camera.model_id, image.CamFromWorld(), point2D.xy),
+            CreateCameraCostFunction<ReprojErrorConstantPoseCostFunctor>(
+                camera.model_id, point2D.xy, image.CamFromWorld()),
             loss_function,
             point3D.xyz.data(),
             camera_params);
       } else {
-        problem_->AddResidualBlock(CameraCostFunction<ReprojErrorCostFunction>(
-                                       camera.model_id, point2D.xy),
-                                   loss_function,
-                                   cam_from_rig_rotation,     // rig == world
-                                   cam_from_rig_translation,  // rig == world
-                                   point3D.xyz.data(),
-                                   camera_params);
+        problem_->AddResidualBlock(
+            CreateCameraCostFunction<ReprojErrorCostFunctor>(camera.model_id,
+                                                             point2D.xy),
+            loss_function,
+            cam_from_rig_rotation,     // rig == world
+            cam_from_rig_translation,  // rig == world
+            point3D.xyz.data(),
+            camera_params);
       }
     } else {
-      problem_->AddResidualBlock(CameraCostFunction<RigReprojErrorCostFunction>(
-                                     camera.model_id, point2D.xy),
-                                 loss_function,
-                                 cam_from_rig_rotation,
-                                 cam_from_rig_translation,
-                                 rig_from_world_rotation,
-                                 rig_from_world_translation,
-                                 point3D.xyz.data(),
-                                 camera_params);
+      problem_->AddResidualBlock(
+          CreateCameraCostFunction<RigReprojErrorCostFunctor>(camera.model_id,
+                                                              point2D.xy),
+          loss_function,
+          cam_from_rig_rotation,
+          cam_from_rig_translation,
+          rig_from_world_rotation,
+          rig_from_world_translation,
+          point3D.xyz.data(),
+          camera_params);
     }
   }
 
@@ -816,8 +848,8 @@ void RigBundleAdjuster::AddPointToProblem(const point3D_t point3D_id,
     }
 
     problem_->AddResidualBlock(
-        CameraCostFunction<ReprojErrorConstantPoseCostFunction>(
-            camera.model_id, image.CamFromWorld(), point2D.xy),
+        CreateCameraCostFunction<ReprojErrorConstantPoseCostFunctor>(
+            camera.model_id, point2D.xy, image.CamFromWorld()),
         loss_function,
         point3D.xyz.data(),
         camera.params.data());
@@ -880,9 +912,9 @@ bool PosePriorBundleAdjuster::Solve(Reconstruction* reconstruction) {
 
   // Fix 7-DOFs of BA problem if not enough valid pose priors
   if (!use_prior_position_) {
-    const std::vector<image_t>& reg_image_ids = reconstruction->RegImageIds();
-    config_.SetConstantCamPose(reg_image_ids[0]);
-    config_.SetConstantCamPositions(reg_image_ids[1], {0});
+    auto reg_image_ids_it = reconstruction->RegImageIds().begin();
+    config_.SetConstantCamPose(*reg_image_ids_it);
+    config_.SetConstantCamPositions(*(++reg_image_ids_it), {0});
   }
 
   // Normalize the reconstruction to avoid any numerical instability BUT do not
@@ -921,9 +953,14 @@ void PosePriorBundleAdjuster::SetUpProblem(
   BundleAdjuster::SetUpProblem(reconstruction, loss_function_.get());
 
   if (use_prior_position_) {
-    for (const auto& [image_id, pose_prior] : image_id_to_pose_prior_) {
-      AddPosePriorToProblem(
-          image_id, pose_prior, reconstruction, prior_loss_function_.get());
+    for (const image_t image_id : config_.Images()) {
+      const auto pose_prior_it = image_id_to_pose_prior_.find(image_id);
+      if (pose_prior_it != image_id_to_pose_prior_.end()) {
+        AddPosePriorToProblem(image_id,
+                              pose_prior_it->second,
+                              reconstruction,
+                              prior_loss_function_.get());
+      }
     }
   }
 }
@@ -938,7 +975,7 @@ void PosePriorBundleAdjuster::AddPosePriorToProblem(
     return;
   }
   Image& image = reconstruction->Image(image_id);
-
+  THROW_CHECK(image.HasPose());
   double* cam_from_world_translation = image.CamFromWorld().translation.data();
 
   // If image has not been added to the problem do not use it
@@ -951,8 +988,9 @@ void PosePriorBundleAdjuster::AddPosePriorToProblem(
       image.CamFromWorld().rotation.coeffs().data();
 
   problem_->AddResidualBlock(
-      PositionPriorErrorCostFunction::Create(
-          normalized_from_metric_ * prior.position, prior.position_covariance),
+      CovarianceWeightedCostFunctor<AbsolutePosePositionPriorCostFunctor>::
+          Create(prior.position_covariance,
+                 normalized_from_metric_ * prior.position),
       prior_loss_function,
       cam_from_world_rotation,
       cam_from_world_translation);
@@ -967,11 +1005,13 @@ bool PosePriorBundleAdjuster::Sim3DAlignment(Reconstruction* reconstruction) {
   v_src.reserve(NumPosePriors());
   v_tgt.reserve(NumPosePriors());
 
-  for (const auto& [image_id, pose_prior] : image_id_to_pose_prior_) {
-    if (pose_prior.IsValid()) {
+  for (const image_t image_id : reconstruction->RegImageIds()) {
+    const auto pose_prior_it = image_id_to_pose_prior_.find(image_id);
+    if (pose_prior_it != image_id_to_pose_prior_.end() &&
+        pose_prior_it->second.IsValid()) {
       const auto& image = reconstruction->Image(image_id);
       v_src.push_back(image.ProjectionCenter());
-      v_tgt.push_back(pose_prior.position);
+      v_tgt.push_back(pose_prior_it->second.position);
       vini_err2_wrt_prior.push_back(
           (v_src.back() - v_tgt.back()).squaredNorm());
     }
@@ -1012,14 +1052,21 @@ bool PosePriorBundleAdjuster::Sim3DAlignment(Reconstruction* reconstruction) {
 
   if (success) {
     reconstruction->Transform(sim3_tform);
+  } else {
+    LOG(WARNING) << "Sim3 alignment w.r.t. prior position failed!";
+  }
 
+  if (VLOG_IS_ON(2) && success) {
     std::vector<double> verr2_wrt_prior;
     verr2_wrt_prior.reserve(vini_err2_wrt_prior.size());
-    for (const auto& [image_id, pose_prior] : image_id_to_pose_prior_) {
-      if (pose_prior.IsValid()) {
+    for (const image_t image_id : reconstruction->RegImageIds()) {
+      const auto pose_prior_it = image_id_to_pose_prior_.find(image_id);
+      if (pose_prior_it != image_id_to_pose_prior_.end() &&
+          pose_prior_it->second.IsValid()) {
         const auto& image = reconstruction->Image(image_id);
         verr2_wrt_prior.push_back(
-            (image.ProjectionCenter() - pose_prior.position).squaredNorm());
+            (image.ProjectionCenter() - pose_prior_it->second.position)
+                .squaredNorm());
       }
     }
 
@@ -1030,8 +1077,6 @@ bool PosePriorBundleAdjuster::Sim3DAlignment(Reconstruction* reconstruction) {
     VLOG(2) << "Sim3 alignment error w.r.t. prior position:\n"
             << "  - rmse:   " << std::sqrt(Mean(verr2_wrt_prior)) << " m\n"
             << "  - median: " << std::sqrt(Median(verr2_wrt_prior)) << " m\n";
-  } else {
-    LOG(WARNING) << "Sim3 alignment w.r.t. prior position failed!";
   }
 
   return success;

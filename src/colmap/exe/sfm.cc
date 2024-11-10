@@ -31,12 +31,13 @@
 
 #include "colmap/controllers/automatic_reconstruction.h"
 #include "colmap/controllers/bundle_adjustment.h"
-#include "colmap/controllers/hierarchical_mapper.h"
+#include "colmap/controllers/hierarchical_pipeline.h"
 #include "colmap/controllers/option_manager.h"
 #include "colmap/estimators/similarity_transform.h"
 #include "colmap/exe/gui.h"
 #include "colmap/scene/reconstruction.h"
 #include "colmap/sfm/observation_manager.h"
+#include "colmap/util/file.h"
 #include "colmap/util/misc.h"
 #include "colmap/util/opengl_utils.h"
 
@@ -85,8 +86,12 @@ int RunAutomaticReconstructor(int argc, char** argv) {
                            &reconstruction_options.camera_model);
   options.AddDefaultOption("single_camera",
                            &reconstruction_options.single_camera);
+  options.AddDefaultOption("single_camera_per_folder",
+                           &reconstruction_options.single_camera_per_folder);
   options.AddDefaultOption("camera_params",
                            &reconstruction_options.camera_params);
+  options.AddDefaultOption("extraction", &reconstruction_options.extraction);
+  options.AddDefaultOption("matching", &reconstruction_options.matching);
   options.AddDefaultOption("sparse", &reconstruction_options.sparse);
   options.AddDefaultOption("dense", &reconstruction_options.dense);
   options.AddDefaultOption("mesher", &mesher, "{poisson, delaunay}");
@@ -242,7 +247,7 @@ int RunMapper(int argc, char** argv) {
   // frame, as the reconstruction is normalized multiple times for numerical
   // stability.
   std::vector<Eigen::Vector3d> orig_fixed_image_positions;
-  std::vector<image_t> fixed_image_ids;
+  std::set<image_t> fixed_image_ids;
   if (options.mapper->fix_existing_images &&
       reconstruction_manager->Size() > 0) {
     const auto& reconstruction = reconstruction_manager->Get(0);
@@ -419,7 +424,7 @@ int RunPosePriorMapper(int argc, char** argv) {
   // frame, as the reconstruction is normalized multiple times for numerical
   // stability.
   std::vector<Eigen::Vector3d> orig_fixed_image_positions;
-  std::vector<image_t> fixed_image_ids;
+  std::set<image_t> fixed_image_ids;
   if (options.mapper->fix_existing_images &&
       reconstruction_manager->Size() > 0) {
     const auto& reconstruction = reconstruction_manager->Get(0);

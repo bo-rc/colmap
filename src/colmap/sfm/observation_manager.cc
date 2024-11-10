@@ -141,7 +141,7 @@ void ObservationManager::SetObservationAsTriangulated(
     return;
   }
   const Image& image = reconstruction_.Image(image_id);
-  THROW_CHECK(image.IsRegistered());
+  THROW_CHECK(image.HasPose());
 
   const Point2D& point2D = image.Point2D(point2D_idx);
   THROW_CHECK(point2D.HasPoint3D());
@@ -174,7 +174,7 @@ void ObservationManager::ResetTriObservations(const image_t image_id,
     return;
   }
   const Image& image = reconstruction_.Image(image_id);
-  THROW_CHECK(image.IsRegistered());
+  THROW_CHECK(image.HasPose());
   const Point2D& point2D = image.Point2D(point2D_idx);
   THROW_CHECK(point2D.HasPoint3D());
 
@@ -487,6 +487,19 @@ std::vector<image_t> ObservationManager::FilterImages(
   }
 
   return filtered_image_ids;
+}
+
+std::ostream& operator<<(std::ostream& stream,
+                         const ObservationManager& obs_manager) {
+  stream << "ObservationManager(reconstruction=" << obs_manager.reconstruction_
+         << ", correspondence_graph=";
+  if (obs_manager.correspondence_graph_ == nullptr) {
+    stream << "null";
+  } else {
+    stream << obs_manager.correspondence_graph_;
+  }
+  stream << ")";
+  return stream;
 }
 
 }  // namespace colmap
