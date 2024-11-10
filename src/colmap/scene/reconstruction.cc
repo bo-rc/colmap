@@ -770,7 +770,8 @@ Reconstruction::GetPoints3DIdsByMasks(const std::string& mask_path,
 
   for (const auto& [img_id, img_file] : images_select.imagePaths) {
     const class Image& image = Image(img_id);
-    if (!image.IsRegistered())
+    const bool is_not_registered = !image.HasPose();
+    if (is_not_registered == false)
       continue;
 
     Bitmap bitmap;
@@ -815,7 +816,8 @@ void Reconstruction::ExtractColorsForProvidedImages(const std::string& path) {
     LOG(INFO) << "image id: " << img_id << " image path: " << img_path
               << std::endl;
     const class Image& image = Image(img_id);
-    if (!image.IsRegistered()) {
+    bool is_not_registered = !image.HasPose();
+    if (is_not_registered) {
       continue;
     }
     const std::string image_path = img_path.string();
@@ -883,7 +885,7 @@ void Reconstruction::ExtractLabeledSubConstructions(const std::string& mask_path
 
     for (const auto& image : images_) {
       class Image new_image = image.second;
-      new_image.SetRegistered(false);
+      DeRegisterImage(new_image.ImageId());
       const auto num_points2D = new_image.NumPoints2D();
       for (point2D_t point2D_idx = 0; point2D_idx < num_points2D;
            ++point2D_idx) {
