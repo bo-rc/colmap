@@ -274,7 +274,7 @@ class FeatureWriterThread : public Thread {
                                   image_data.camera.camera_id,
                                   image_data.camera.ModelName().c_str());
         LOG(INFO) << StringPrintf(
-            "  Focal Length:    %.2fpx%s",
+            "  Mean Focal Length:    %.2fpx%s",
             image_data.camera.MeanFocalLength(),
             image_data.camera.has_prior_focal_length ? " (Prior)" : "");
         LOG(INFO) << StringPrintf("  Features:        %d",
