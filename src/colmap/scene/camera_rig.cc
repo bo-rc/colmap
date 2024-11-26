@@ -80,6 +80,11 @@ void CameraRig::AddSnapshot(const std::vector<image_t>& image_ids) {
 void CameraRig::Check(const Reconstruction& reconstruction) const {
   THROW_CHECK(HasCamera(ref_camera_id_));
 
+  LOG(INFO) << "legit cams_from_rigs_:\n";
+  for (const auto& rig_camera : cams_from_rigs_) {
+    LOG(INFO) << "rig_camera.first: " << rig_camera.first;
+  }
+
   for (const auto& rig_camera : cams_from_rigs_) {
     LOG(INFO) << "rig_camera.first: " << rig_camera.first;
     THROW_CHECK(reconstruction.ExistsCamera(rig_camera.first));
