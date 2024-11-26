@@ -355,6 +355,10 @@ const std::unordered_map<point3D_t, Point3D>& Reconstruction::Points3D() const {
 }
 
 bool Reconstruction::ExistsCamera(const camera_t camera_id) const {
+  LOG(INFO) << "legit Cameras:\n";
+  for (const auto& camera : cameras_) {
+    LOG(INFO) << camera.first << " " << camera.second.ModelName();
+  }
   return cameras_.find(camera_id) != cameras_.end();
 }
 
