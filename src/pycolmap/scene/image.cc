@@ -47,14 +47,16 @@ void BindImage(py::module& m) {
            "name"_a = "",
            py::arg_v("points2D", Point2DVector(), "ListPoint2D()"),
            "cam_from_world"_a = py::none(),
-           "camera_id"_a = kInvalidCameraId,
-           "id"_a = kInvalidImageId)
+           py::arg_v(
+               "camera_id", kInvalidCameraId, "pycolmap.INVALID_CAMERA_ID"),
+           py::arg_v("id", kInvalidImageId, "pycolmap.INVALID_IMAGE_ID"))
       .def(py::init(&MakeImage<Eigen::Vector2d>),
            "name"_a = "",
            "keypoints"_a = std::vector<Eigen::Vector2d>(),
            "cam_from_world"_a = Rigid3d(),
-           "camera_id"_a = kInvalidCameraId,
-           "id"_a = kInvalidImageId)
+           py::arg_v(
+               "camera_id", kInvalidCameraId, "pycolmap.INVALID_CAMERA_ID"),
+           py::arg_v("id", kInvalidImageId, "pycolmap.INVALID_IMAGE_ID"))
       .def_property("image_id",
                     &Image::ImageId,
                     &Image::SetImageId,
@@ -129,7 +131,8 @@ void BindImage(py::module& m) {
               return py::none();
             }
           },
-          "Project 3D point onto the image")
+          "Project 3D point onto the image",
+          "point3D"_a)
       .def("has_camera_id",
            &Image::HasCameraId,
            "Check whether identifier of camera has been set.")

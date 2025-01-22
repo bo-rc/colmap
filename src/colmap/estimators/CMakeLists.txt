@@ -27,7 +27,6 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-
 set(FOLDER_NAME "estimators")
 
 COLMAP_ADD_LIBRARY(
@@ -50,7 +49,7 @@ COLMAP_ADD_LIBRARY(
         homography_matrix.h homography_matrix.cc
         pose.h pose.cc
         generalized_pose.h generalized_pose.cc
-        similarity_transform.h
+        similarity_transform.h similarity_transform.cc
         translation_transform.h
         triangulation.h triangulation.cc
         two_view_geometry.h two_view_geometry.cc
@@ -66,7 +65,6 @@ COLMAP_ADD_LIBRARY(
         colmap_optim
         Eigen3::Eigen
         Ceres::ceres
-    PRIVATE_LINK_LIBS
         PoseLib::PoseLib
 )
 

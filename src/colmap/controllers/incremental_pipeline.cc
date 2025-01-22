@@ -238,7 +238,8 @@ bool IncrementalPipeline::LoadDatabase() {
 
   // Make sure images of the given reconstruction are also included when
   // manually specifying images for the reconstruction procedure.
-  std::unordered_set<std::string> image_names = options_->image_names;
+  std::unordered_set<std::string> image_names = {options_->image_names.begin(),
+                                                 options_->image_names.end()};
   if (reconstruction_manager_->Size() == 1 && !options_->image_names.empty()) {
     const auto& reconstruction = reconstruction_manager_->Get(0);
     for (const image_t image_id : reconstruction->RegImageIds()) {
@@ -296,7 +297,7 @@ IncrementalPipeline::Status IncrementalPipeline::InitializeReconstruction(
       return Status::BAD_INITIAL_PAIR;
     }
     const bool provided_init_success = mapper.EstimateInitialTwoViewGeometry(
-        mapper_options, two_view_geometry, image_id1, image_id2);
+        mapper_options, image_id1, image_id2, two_view_geometry);
     if (!provided_init_success) {
       LOG(INFO) << "Provided pair is insuitable for intialization.";
       return Status::BAD_INITIAL_PAIR;

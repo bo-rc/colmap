@@ -150,10 +150,11 @@ void BindIncrementalPipeline(py::module& m) {
                      &Opts::snapshot_images_freq,
                      "Frequency of registered images according to which "
                      "reconstruction snapshots will be saved.")
-      .def_readwrite("image_names",
-                     &Opts::image_names,
-                     "Which images to reconstruct. If no images are specified, "
-                     "all images will be reconstructed by default.")
+      .def_readwrite(
+          "image_names",
+          &Opts::image_names,
+          "Optional list of image names to reconstruct. If no images are "
+          "specified, all images will be reconstructed by default.")
       .def_readwrite("fix_existing_images",
                      &Opts::fix_existing_images,
                      "If reconstruction is provided as input, fix the existing "
@@ -340,7 +341,7 @@ void BindIncrementalMapperImpl(py::module& m) {
   // TODO: migrate comments. improve formatting
   py::class_<IncrementalMapper, std::shared_ptr<IncrementalMapper>>(
       m, "IncrementalMapper")
-      .def(py::init<std::shared_ptr<const DatabaseCache>>())
+      .def(py::init<std::shared_ptr<const DatabaseCache>>(), "database_cache"_a)
       .def("begin_reconstruction",
            &IncrementalMapper::BeginReconstruction,
            "reconstruction"_a)
@@ -379,7 +380,7 @@ void BindIncrementalMapperImpl(py::module& m) {
              const image_t image_id2) -> py::typing::Optional<TwoViewGeometry> {
             TwoViewGeometry two_view_geometry;
             const bool success = self.EstimateInitialTwoViewGeometry(
-                options, two_view_geometry, image_id1, image_id2);
+                options, image_id1, image_id2, two_view_geometry);
             if (success)
               return py::cast(two_view_geometry);
             else
